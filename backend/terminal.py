@@ -17,6 +17,11 @@ log = logging.getLogger("webterminal.terminal")
 
 SSH_HOST = "127.0.0.1"
 SSH_PORT = 20776          # this host's sshd listens on 20776, not 22
+# Clave SSH del backend: si existe, permite abrir la terminal SIN contraseña del
+# sistema (la barrera real ya es el cert mTLS + el login web). Si se envía
+# contraseña, se usa esa (compatibilidad). La clave pública debe estar en el
+# authorized_keys del usuario, idealmente restringida a from="127.0.0.1".
+SSH_KEY = os.environ.get("WEBTERMINAL_SSH_KEY", "/opt/webterminal/certs/wt_ssh")
 TERM_TYPE = "xterm-256color"
 DEFAULT_COLS = 220
 DEFAULT_ROWS = 50
@@ -93,18 +98,33 @@ class SSHTerminal:
         """Open SSH + interactive shell (blocking paramiko runs in a worker thread)."""
         await asyncio.to_thread(self._connect_blocking)
 
+    def _load_key(self):
+        """Carga la clave privada del backend si existe (varios tipos)."""
+        if not SSH_KEY or not os.path.exists(SSH_KEY):
+            return None
+        for kc in (paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey):
+            try:
+                return kc.from_private_key_file(SSH_KEY)
+            except Exception:
+                continue
+        return None
+
     def _connect_blocking(self) -> None:
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        client.connect(
-            SSH_HOST,
-            port=SSH_PORT,
-            username=self.username,
-            password=self.password,
-            look_for_keys=False,
-            allow_agent=False,
-            timeout=10,
-        )
+        common = dict(hostname=SSH_HOST, port=SSH_PORT, username=self.username,
+                      look_for_keys=False, allow_agent=False, timeout=10)
+        pkey = None if self.password else self._load_key()
+        if self.password:
+            # Si el usuario escribió contraseña, se usa (compatibilidad).
+            client.connect(password=self.password, **common)
+        elif pkey is not None:
+            # Sin contraseña: entrar por la clave del backend (gate = cert + login web).
+            client.connect(pkey=pkey, **common)
+            log.info("SSH key auth for %s@%s:%s", self.username, SSH_HOST, SSH_PORT)
+        else:
+            # Ni contraseña ni clave: intento sin credenciales (fallará con mensaje claro).
+            client.connect(password="", **common)
         transport = client.get_transport()
         if transport is not None:
             transport.set_keepalive(30)  # mantiene vivo el túnel ante NAT/idle

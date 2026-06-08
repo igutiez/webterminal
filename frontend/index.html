@@ -76,11 +76,11 @@
   <div id="ssh-screen" class="screen card-screen" style="display:none;">
     <form id="ssh-form" class="card">
       <h1>Conectar terminal</h1>
-      <p class="subtitle" id="ssh-subtitle">Credenciales del servidor (SSH)</p>
+      <p class="subtitle" id="ssh-subtitle">Acceso al servidor (el certificado y tu login ya te identifican)</p>
       <label for="ssh-user">Usuario SSH</label>
       <input id="ssh-user" type="text" value="ubuntu" autocomplete="off" required />
-      <label for="ssh-password">Contraseña SSH</label>
-      <input id="ssh-password" type="password" autocomplete="off" required autofocus />
+      <label for="ssh-password">Contraseña SSH <span style="text-transform:none;color:var(--muted)">(opcional — déjala vacía para entrar con la clave del servidor)</span></label>
+      <input id="ssh-password" type="password" autocomplete="off" />
       <label class="remember"><input type="checkbox" id="ssh-remember" /> Recordar credenciales SSH en este equipo</label>
       <div class="btn-row">
         <button type="submit" class="btn-primary">Abrir terminal</button>

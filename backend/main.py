@@ -236,7 +236,9 @@ async def ws_endpoint(websocket: WebSocket):
         try:
             data = json.loads(first)
             ssh_user = (data.get("ssh_user") or "").strip()
-            ssh_password = data["password"]
+            # Contraseña OPCIONAL: si va vacía, el backend entra por clave SSH
+            # (la barrera real es el cert mTLS + el login web).
+            ssh_password = data.get("password") or ""
             session_label = data.get("session")  # opcional: qué sesión tmux abrir
         except (ValueError, KeyError, TypeError):
             await websocket.send_text("\r\n[webterminal] mensaje inicial invalido\r\n")
