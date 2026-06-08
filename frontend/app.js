@@ -70,11 +70,9 @@
       show("login-screen");
       let r; try { r = await doLogin(creds.email, creds.password); } catch (_) { r = { ok: false }; }
       if (r.ok) {
-        if (creds.ssh_user && creds.ssh_password) {
-          startSsh(creds.ssh_user, creds.ssh_password);   // directo a la terminal
-        } else {
-          show("ssh-screen"); $("ssh-password").focus();
-        }
+        // No entramos directos: paramos en la 2ª pantalla (SSH) con los datos ya
+        // rellenos para que el usuario elija "Abrir terminal" o "Abrir + Claude".
+        show("ssh-screen");
       } else {
         $("login-error").textContent = r.status === 401
           ? "Las credenciales guardadas ya no son válidas. Vuelve a entrar."

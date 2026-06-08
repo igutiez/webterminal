@@ -33,7 +33,7 @@ log = logging.getLogger("webterminal")
 
 FRONTEND_DIR = os.environ.get("WEBTERMINAL_FRONTEND", "/opt/webterminal/frontend")
 PUBLIC_URL = os.environ.get("WEBTERMINAL_URL", "https://terminal.vistawib.com")
-MAX_CONNECTIONS = 2
+MAX_CONNECTIONS = int(os.environ.get("WEBTERMINAL_MAX_CONNECTIONS", "5"))
 RESET_TTL_MIN = 30
 MIN_PW_LEN = 8
 
