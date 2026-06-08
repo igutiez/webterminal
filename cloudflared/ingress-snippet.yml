@@ -1,0 +1,13 @@
+# Reference only — setup.sh inserts this rule into /etc/cloudflared/config.yml,
+# BEFORE the final catch-all `- service: http_status:404` line.
+#
+#   - hostname: terminal.vistawib.com
+#     service: http://localhost:8765
+#
+# Then the DNS route is created with (origin cert at /home/ubuntu/.cloudflared/cert.pem):
+#
+#   cloudflared tunnel route dns vista_web terminal.vistawib.com
+#
+# and the tunnel is restarted:
+#
+#   systemctl restart cloudflared

@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WebTerminal</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="https://unpkg.com/xterm@5.3.0/css/xterm.css" />
+  <script src="https://unpkg.com/xterm@5.3.0/lib/xterm.js"></script>
+  <script src="https://unpkg.com/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+  <script src="https://unpkg.com/xterm-addon-web-links@0.9.0/lib/xterm-addon-web-links.js"></script>
+  <script src="https://unpkg.com/xterm-addon-search@0.13.0/lib/xterm-addon-search.js"></script>
+  <script src="https://unpkg.com/xterm-addon-canvas@0.5.0/lib/xterm-addon-canvas.js"></script>
+
+  <link rel="stylesheet" href="style.css?v=11" />
+</head>
+<body>
+  <!-- LOGIN -->
+  <div id="login-screen" class="screen card-screen">
+    <form id="login-form" class="card" autocomplete="on">
+      <h1>WebTerminal</h1>
+      <p class="subtitle">Acceso seguro</p>
+      <label for="login-email">Email</label>
+      <input id="login-email" name="email" type="email" autocomplete="username" required autofocus />
+      <label for="login-password">Contraseña</label>
+      <input id="login-password" name="password" type="password" autocomplete="current-password" required />
+      <label class="remember"><input type="checkbox" id="login-remember" /> Recordar en este equipo</label>
+      <button type="submit" class="btn-primary">Entrar</button>
+      <div class="error" id="login-error"></div>
+      <a href="#" id="link-forgot" class="link">¿Olvidaste tu contraseña?</a>
+    </form>
+  </div>
+
+  <!-- FORGOT -->
+  <div id="forgot-screen" class="screen card-screen" style="display:none;">
+    <form id="forgot-form" class="card">
+      <h1>Recuperar acceso</h1>
+      <p class="subtitle">Te enviaremos un enlace por email</p>
+      <label for="forgot-email">Email</label>
+      <input id="forgot-email" name="email" type="email" autocomplete="username" required />
+      <button type="submit" class="btn-primary">Enviar enlace</button>
+      <div class="info" id="forgot-info"></div>
+      <a href="#" id="link-back-login" class="link">Volver al login</a>
+    </form>
+  </div>
+
+  <!-- RESET (shown when URL has ?token=) -->
+  <div id="reset-screen" class="screen card-screen" style="display:none;">
+    <form id="reset-form" class="card">
+      <h1>Nueva contraseña</h1>
+      <p class="subtitle">Elige una contraseña (mín. 8 caracteres)</p>
+      <label for="reset-password">Nueva contraseña</label>
+      <input id="reset-password" type="password" autocomplete="new-password" required />
+      <label for="reset-password2">Repite la contraseña</label>
+      <input id="reset-password2" type="password" autocomplete="new-password" required />
+      <button type="submit" class="btn-primary">Guardar</button>
+      <div class="error" id="reset-error"></div>
+      <div class="info" id="reset-info"></div>
+    </form>
+  </div>
+
+  <!-- SSH CONNECT (after web login) -->
+  <div id="ssh-screen" class="screen card-screen" style="display:none;">
+    <form id="ssh-form" class="card">
+      <h1>Conectar terminal</h1>
+      <p class="subtitle" id="ssh-subtitle">Credenciales del servidor (SSH)</p>
+      <label for="ssh-user">Usuario SSH</label>
+      <input id="ssh-user" type="text" value="ubuntu" autocomplete="off" required />
+      <label for="ssh-password">Contraseña SSH</label>
+      <input id="ssh-password" type="password" autocomplete="off" required autofocus />
+      <label class="remember"><input type="checkbox" id="ssh-remember" /> Recordar credenciales SSH en este equipo</label>
+      <button type="submit" class="btn-primary">Abrir terminal</button>
+      <div class="error" id="ssh-error"></div>
+      <div class="row-links">
+        <a href="#" id="link-account" class="link">Mi cuenta</a>
+        <a href="#" id="link-logout" class="link">Salir</a>
+      </div>
+    </form>
+  </div>
+
+  <!-- ACCOUNT (change email / password) -->
+  <div id="account-screen" class="screen card-screen" style="display:none;">
+    <form id="account-form" class="card">
+      <h1>Mi cuenta</h1>
+      <p class="subtitle" id="account-current"></p>
+      <label for="account-newemail">Nuevo email (opcional)</label>
+      <input id="account-newemail" type="email" autocomplete="off" />
+      <label for="account-newpassword">Nueva contraseña (opcional, mín. 8)</label>
+      <input id="account-newpassword" type="password" autocomplete="new-password" />
+      <label for="account-current-pw">Contraseña actual (para confirmar)</label>
+      <input id="account-current-pw" type="password" autocomplete="current-password" required />
+      <button type="submit" class="btn-primary">Guardar cambios</button>
+      <div class="error" id="account-error"></div>
+      <div class="info" id="account-info"></div>
+      <a href="#" id="link-account-back" class="link">Volver</a>
+    </form>
+  </div>
+
+  <!-- TERMINAL -->
+  <div id="terminal-screen" class="screen" style="display:none;">
+    <div id="topbar">
+      <div class="left">
+        <span id="status-dot" class="dot dot-red"></span>
+        <span id="status-text">desconectado</span>
+      </div>
+      <div class="center">WebTerminal</div>
+      <div class="right">
+        <button id="img-upload" title="Subir imagen (o pega / arrastra una)">📎</button>
+        <button id="font-dec" title="Reducir fuente">&minus;</button>
+        <span id="font-size">14</span>
+        <button id="font-inc" title="Aumentar fuente">&plus;</button>
+      </div>
+    </div>
+    <div id="terminal-container"></div>
+    <input id="img-file" type="file" accept="image/*" style="display:none" />
+    <div id="toast" class="toast"></div>
+  </div>
+
+  <script src="app.js?v=11"></script>
+</body>
+</html>

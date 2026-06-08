@@ -1,0 +1,14 @@
+venv/
+__pycache__/
+*.pyc
+certs/
+credentials.txt
+webterminal.db
+webterminal.db-*
+*.srl
+*.key
+*.p12
+*.csr
+*.crt
+secret_key.txt
+backend/secret_key.txt
