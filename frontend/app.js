@@ -645,15 +645,17 @@
       const row = document.createElement("div");
       row.className = "frow" + (it.dir ? " isdir" : "");
       const ico = document.createElement("span"); ico.className = "ico"; ico.textContent = it.dir ? "📁" : (it.link ? "🔗" : "📄");
+      const info = document.createElement("div"); info.className = "finfo";
       const name = document.createElement("span"); name.className = "fname"; name.textContent = it.name; name.title = it.name;
       if (it.dir) name.addEventListener("click", () => fsList(full));
       const meta = document.createElement("span"); meta.className = "fmeta";
-      meta.textContent = (it.dir ? "" : fsFmtSize(it.size) + "  ·  ") + fsFmtDate(it.mtime);
+      meta.textContent = (it.dir ? "carpeta · " : fsFmtSize(it.size) + " · ") + fsFmtDate(it.mtime);
+      info.appendChild(name); info.appendChild(meta);
       const ops = document.createElement("span"); ops.className = "fops";
       if (!it.dir) ops.appendChild(fsOp("⬇", "Descargar", () => fsDownload(full)));
       ops.appendChild(fsOp("✎", "Renombrar / mover", () => fsRename(full, it.name)));
       ops.appendChild(fsOp("🗑", "Borrar", () => fsDelete(full, it.name, it.dir), "del"));
-      row.appendChild(ico); row.appendChild(name); row.appendChild(meta); row.appendChild(ops);
+      row.appendChild(ico); row.appendChild(info); row.appendChild(ops);
       list.appendChild(row);
     });
   }
@@ -713,13 +715,20 @@
     if (!res.ok) { fsStatus(d.detail || "No se pudo borrar", "err"); return; }
     fsList(fsPath);
   }
+  function fsIsOpen() { return document.body.classList.contains("files-open"); }
+  function fsRefit() { setTimeout(() => { try { doFit(); } catch (_) {} }, 60); }
   function fsOpen() {
-    $("files-modal").style.display = "flex";
+    document.body.classList.add("files-open");
+    fsRefit();                 // la terminal se encoge: reajustar xterm
     fsList(fsPath || "");
   }
-  function fsClose() { $("files-modal").style.display = "none"; if (term) term.focus(); }
+  function fsClose() {
+    document.body.classList.remove("files-open");
+    fsRefit(); if (term) term.focus();
+  }
+  function fsToggle() { fsIsOpen() ? fsClose() : fsOpen(); }
   function setupFiles() {
-    const btn = $("files-btn"); if (btn) btn.addEventListener("click", fsOpen);
+    const btn = $("files-btn"); if (btn) btn.addEventListener("click", fsToggle);
     const c = $("files-close"); if (c) c.addEventListener("click", fsClose);
     const up = $("files-up"); if (up) up.addEventListener("click", () => {
       const parent = fsPath.replace(/\/+$/, "").split("/").slice(0, -1).join("/") || "/";
@@ -730,14 +739,14 @@
     const ub = $("files-upload-btn"); if (ub) ub.addEventListener("click", () => $("files-input").click());
     const inp = $("files-input"); if (inp) inp.addEventListener("change", (e) => { fsUploadFiles(e.target.files); e.target.value = ""; });
     // Cerrar con Escape
-    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $("files-modal").style.display === "flex") fsClose(); });
-    // Arrastrar y soltar archivos en el modal
-    const modal = $("files-modal");
-    if (modal) {
-      modal.addEventListener("dragover", (e) => { e.preventDefault(); modal.classList.add("dragging"); });
-      modal.addEventListener("dragleave", (e) => { if (e.target === modal) modal.classList.remove("dragging"); });
-      modal.addEventListener("drop", (e) => {
-        e.preventDefault(); modal.classList.remove("dragging");
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && fsIsOpen()) fsClose(); });
+    // Arrastrar y soltar archivos en el panel
+    const side = $("files-side");
+    if (side) {
+      side.addEventListener("dragover", (e) => { e.preventDefault(); side.classList.add("dragging"); });
+      side.addEventListener("dragleave", (e) => { if (e.target === side) side.classList.remove("dragging"); });
+      side.addEventListener("drop", (e) => {
+        e.preventDefault(); side.classList.remove("dragging");
         const files = (e.dataTransfer && e.dataTransfer.files) || [];
         if (files.length) fsUploadFiles(files);
       });
