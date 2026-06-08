@@ -120,7 +120,9 @@ label.remember input { width: auto; margin: 0; accent-color: var(--accent); curs
 .btn-claude { background: var(--green); }
 
 /* ---------- micrófono (dictado) / captura activos ---------- */
-#mic.mic-on, #screencap.cap-on { color: var(--red); border-color: var(--red); animation: micpulse 1.1s infinite; }
+#mic.mic-on, #screencap.cap-on, #screenrec.cap-on { color: var(--red); border-color: var(--red); animation: micpulse 1.1s infinite; }
+/* Grabando vídeo: fondo rojo sólido para que se note */
+#screenrec.rec-on { background: var(--red); color: #fff; border-color: var(--red); animation: micpulse 1.1s infinite; }
 /* Botón de dejar de compartir (visible solo mientras se comparte) */
 #cap-stop { color: var(--red); border-color: var(--red); }
 @keyframes micpulse {

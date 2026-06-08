@@ -247,14 +247,14 @@
   }
 
   // ---------- CAPTURA DE PANTALLA (para que Claude "vea" otra pestaña/ventana) ----------
-  // Modelo "armado": como el error está en OTRA pestaña, primero eliges qué compartir
-  // (queda compartiéndose aunque cambies de pestaña). Luego, cada vez que pulsas 📸,
-  // capturamos un fotograma de ESA fuente, lo subimos y metemos la ruta para Claude.
-  // Clic derecho en 📸 = dejar de compartir. Solo escritorio (iOS no soporta getDisplayMedia).
+  // Eliges qué compartir (queda compartiéndose aunque cambies de pestaña).
+  //  📷 foto: 1ª pulsación comparte; 2ª captura un fotograma nítido.
+  //  🎥 vídeo: graba con MediaRecorder (captura continua real, sin negros ni
+  //     repetidos), lo sube y el servidor saca los fotogramas con ffmpeg.
+  //  ⏹ deja de compartir. Solo escritorio (iOS no soporta getDisplayMedia).
   let capStream = null, capVideo = null;
-  // Asegura que hay una fuente compartida. Devuelve true SOLO si ya estaba lista de
-  // antes; si la acaba de pedir (recién armada), devuelve false para que esta misma
-  // pulsación solo comparta (el usuario va a la pestaña y vuelve a pulsar para capturar).
+  // Asegura que hay una fuente compartida (la pide si no la hay). Devuelve true si
+  // hay una fuente lista para usar.
   async function ensureShare() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
       showToast("Tu navegador no permite capturar la pantalla", true); return false;
@@ -269,8 +269,7 @@
     $("screencap").classList.add("cap-on");
     const s = $("cap-stop"); if (s) s.style.display = "";
     capStream.getVideoTracks().forEach((t) => t.addEventListener("ended", stopCapture));
-    showToast("🖥️ Compartiendo. Ve a la pestaña del error y vuelve aquí: 📷 foto · ⏹ parar.");
-    return false;  // recién armada: esta pulsación solo comparte
+    return true;
   }
   function grabFrame() {
     const w = capVideo.videoWidth || 1920, h = capVideo.videoHeight || 1080;
@@ -278,19 +277,68 @@
     c.getContext("2d").drawImage(capVideo, 0, 0, w, h);
     return c;
   }
-  // 📸 una sola foto (arma la 1ª vez; captura a partir de la 2ª)
+  // 📷 una sola foto (arma la 1ª vez; captura a partir de la 2ª)
   async function captureScreen() {
+    const had = !!capStream;
     if (!(await ensureShare())) return;
-    if (!capVideo.videoWidth) return;  // recién armado: aún sin fotograma
+    if (!had) {  // recién armado: esta pulsación solo comparte
+      showToast("🖥️ Compartiendo. Ve a la pestaña del error y vuelve aquí: 📷 foto · ⏹ parar.");
+      return;
+    }
+    if (!capVideo.videoWidth) return;
     try {
       const blob = await new Promise((res) => grabFrame().toBlob(res, "image/png"));
       if (blob) await uploadFile(new File([blob], "captura-" + Date.now() + ".png", { type: "image/png" }));
     } catch (_) { showToast("No se pudo capturar el fotograma", true); }
   }
+  // 🎥 vídeo: alterna grabar/parar. Al parar, sube el webm y el servidor monta los fotogramas.
+  let recorder = null, recChunks = [];
+  async function toggleRecord() {
+    if (recorder) {  // ya grabando -> parar y procesar
+      showToast("Procesando vídeo…");
+      try { recorder.stop(); } catch (_) {}
+      return;
+    }
+    if (!(await ensureShare())) return;  // arma si hace falta; el vídeo graba desde ya
+    let mime = "video/webm;codecs=vp9";
+    if (!(window.MediaRecorder && MediaRecorder.isTypeSupported(mime))) mime = "video/webm";
+    try { recorder = new MediaRecorder(capStream, { mimeType: mime }); }
+    catch (_) { showToast("Tu navegador no permite grabar vídeo", true); return; }
+    recChunks = [];
+    recorder.ondataavailable = (e) => { if (e.data && e.data.size) recChunks.push(e.data); };
+    recorder.onstop = async () => {
+      const blob = new Blob(recChunks, { type: "video/webm" });
+      recorder = null; recChunks = [];
+      $("screenrec").classList.remove("rec-on");
+      await uploadScreencast(blob);
+    };
+    recorder.start();
+    $("screenrec").classList.add("rec-on");
+    showToast("🔴 Grabando. Ve a la pestaña del error, reprodúcelo y vuelve a pulsar 🎥 para parar.");
+  }
+  async function uploadScreencast(blob) {
+    if (!blob || !blob.size || !jwt) { showToast("Grabación vacía", true); return; }
+    showToast("Subiendo vídeo y extrayendo fotogramas…");
+    const fd = new FormData();
+    fd.append("file", blob, "grabacion.webm");
+    try {
+      const res = await fetch("/screencast", { method: "POST", headers: { Authorization: "Bearer " + jwt }, body: fd });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { showToast(d.detail || ("Error al procesar (" + res.status + ")"), true); return; }
+      const p = d.path;
+      const arg = /\s/.test(p) ? "'" + p.replace(/'/g, "'\\''") + "'" : p;
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(arg + " ");
+      showToast("Secuencia lista (" + d.frames + " fotogramas) ➜ " + d.name);
+      if (term) term.focus();
+    } catch (_) { showToast("Error de red al subir el vídeo", true); }
+  }
   function stopCapture() {
+    try { if (recorder) recorder.stop(); } catch (_) {}
+    recorder = null;
     try { if (capStream) capStream.getTracks().forEach((t) => t.stop()); } catch (_) {}
     capStream = null; capVideo = null;
     $("screencap").classList.remove("cap-on");
+    const rb = $("screenrec"); if (rb) rb.classList.remove("cap-on", "rec-on");
     const s = $("cap-stop"); if (s) s.style.display = "none";
   }
 
@@ -515,8 +563,9 @@
     // --- Botón 📋 pegar texto del portapapeles (en móvil no hay Ctrl+V) ---
     $("paste").addEventListener("click", () => { pasteFromClipboard(); if (term) term.focus(); });
 
-    // --- Botones 📷 foto / ⏹ parar ---
+    // --- Botones 📷 foto / 🎥 vídeo / ⏹ parar ---
     $("screencap").addEventListener("click", captureScreen);
+    $("screenrec").addEventListener("click", toggleRecord);
     $("cap-stop").addEventListener("click", () => { stopCapture(); showToast("Has dejado de compartir la pantalla"); });
 
     if (isMobile()) document.body.classList.add("is-mobile");

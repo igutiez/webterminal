@@ -13,13 +13,18 @@ Routes:
   /                      static frontend
 """
 import asyncio
+import glob
 import json
 import logging
+import math
 import os
 import posixpath
 import re
 import secrets
+import shutil
 import stat as stat_mod
+import subprocess
+import tempfile
 from urllib.parse import quote
 
 from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile, WebSocket
@@ -275,6 +280,84 @@ async def ws_endpoint(websocket: WebSocket):
         async with _lock:
             _active -= 1
         log.info("session end web=%s active=%d", web_email, _active)
+
+
+# ============================== GRABACIÓN DE PANTALLA ==============================
+# El navegador graba un vídeo (webm) de la pantalla compartida y lo sube aquí.
+# Con ffmpeg sacamos fotogramas repartidos en el tiempo y los montamos en una sola
+# imagen en rejilla (para que Claude "vea" la secuencia). Se guarda también el webm.
+
+def _ffprobe_duration(path: str) -> float:
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", path],
+            capture_output=True, timeout=20,
+        )
+        d = json.loads(out.stdout or b"{}")
+        return float(d.get("format", {}).get("duration") or 0)
+    except Exception:
+        return 0.0
+
+
+def _make_montage(webm_bytes: bytes) -> dict:
+    tmp = tempfile.mkdtemp(prefix="cast_")
+    try:
+        inp = os.path.join(tmp, "in.webm")
+        with open(inp, "wb") as f:
+            f.write(webm_bytes)
+        dur = _ffprobe_duration(inp)
+        target = max(4, min(16, round(dur))) if dur > 0 else 8   # ~1 fotograma/seg, 4-16
+        fps = (target / dur) if dur > 0 else 1.0
+        fps = max(0.2, min(4.0, fps))
+        fdir = os.path.join(tmp, "f"); os.makedirs(fdir)
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", inp, "-vf", f"fps={fps:.4f},scale=760:-1:flags=lanczos",
+             os.path.join(fdir, "f_%03d.png")],
+            capture_output=True, timeout=120,
+        )
+        frames = sorted(glob.glob(os.path.join(fdir, "f_*.png")))
+        if not frames:
+            raise RuntimeError("ffmpeg no extrajo fotogramas")
+        n = len(frames)
+        cols = min(4, n); rows = math.ceil(n / cols)
+        os.makedirs(UPLOAD_DIR, exist_ok=True)
+        out = _unique_path(UPLOAD_DIR, "secuencia.png")
+        subprocess.run(
+            ["ffmpeg", "-y", "-framerate", "1", "-i", os.path.join(fdir, "f_%03d.png"),
+             "-vf", f"tile={cols}x{rows}:padding=6:margin=6:color=0x0d0d1a", "-frames:v", "1", out],
+            capture_output=True, timeout=120,
+        )
+        if not os.path.exists(out):
+            raise RuntimeError("ffmpeg no generó el montaje")
+        try: os.chmod(out, 0o644)
+        except OSError: pass
+        webm_out = _unique_path(UPLOAD_DIR, "grabacion.webm")
+        shutil.move(inp, webm_out)
+        try: os.chmod(webm_out, 0o644)
+        except OSError: pass
+        return {"path": out, "name": os.path.basename(out), "frames": n, "webm": webm_out}
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@app.post("/screencast")
+async def screencast(
+    authorization: str | None = Header(default=None),
+    file: UploadFile = File(...),
+):
+    web_email = _bearer(authorization)
+    data = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(data) > MAX_UPLOAD_BYTES:
+        mb = MAX_UPLOAD_BYTES // (1024 * 1024)
+        raise HTTPException(status_code=413, detail=f"Vídeo demasiado grande (máx {mb} MB)")
+    if not data:
+        raise HTTPException(status_code=400, detail="Vídeo vacío")
+    try:
+        res = await asyncio.to_thread(_make_montage, data)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"No se pudo procesar el vídeo: {exc}")
+    log.info("screencast web=%s -> %s (%d frames, webm=%s)", web_email, res["path"], res["frames"], res["webm"])
+    return {"path": res["path"], "name": res["name"], "frames": res["frames"], "webm": res["webm"]}
 
 
 # ============================== EXPLORADOR DE ARCHIVOS ==============================
