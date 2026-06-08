@@ -252,37 +252,79 @@
   // capturamos un fotograma de ESA fuente, lo subimos y metemos la ruta para Claude.
   // Clic derecho en 📸 = dejar de compartir. Solo escritorio (iOS no soporta getDisplayMedia).
   let capStream = null, capVideo = null;
-  async function captureScreen() {
+  // Asegura que hay una fuente compartida (la pide la 1ª vez). Devuelve true si lista.
+  async function ensureShare() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
-      showToast("Tu navegador no permite capturar la pantalla", true); return;
+      showToast("Tu navegador no permite capturar la pantalla", true); return false;
     }
-    // 1ª vez: elegir la fuente y quedar armado.
-    if (!capStream) {
-      try {
-        capStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
-      } catch (_) { return; }  // el usuario canceló
-      capVideo = document.createElement("video");
-      capVideo.srcObject = capStream; capVideo.muted = true;
-      try { await capVideo.play(); } catch (_) {}
-      const b = $("screencap"); if (b) b.classList.add("cap-on");
-      capStream.getVideoTracks().forEach((t) => t.addEventListener("ended", stopCapture));
-      showToast("📸 Compartiendo. Ve a la pestaña del error y vuelve aquí; pulsa 📸 para capturar.");
-      return;
-    }
-    // Ya armado: capturar un fotograma de la fuente compartida.
+    if (capStream) return true;
     try {
-      const w = capVideo.videoWidth || 1920, h = capVideo.videoHeight || 1080;
-      const canvas = document.createElement("canvas");
-      canvas.width = w; canvas.height = h;
-      canvas.getContext("2d").drawImage(capVideo, 0, 0, w, h);
-      const blob = await new Promise((res) => canvas.toBlob(res, "image/png"));
+      capStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+    } catch (_) { return false; }  // el usuario canceló
+    capVideo = document.createElement("video");
+    capVideo.srcObject = capStream; capVideo.muted = true;
+    try { await capVideo.play(); } catch (_) {}
+    $("screencap").classList.add("cap-on");
+    const r = $("screenrec"); if (r) r.classList.add("cap-on");
+    capStream.getVideoTracks().forEach((t) => t.addEventListener("ended", stopCapture));
+    showToast("📸 Compartiendo. Ve a la pestaña del error y vuelve aquí para capturar.");
+    return true;
+  }
+  function grabFrame() {
+    const w = capVideo.videoWidth || 1920, h = capVideo.videoHeight || 1080;
+    const c = document.createElement("canvas"); c.width = w; c.height = h;
+    c.getContext("2d").drawImage(capVideo, 0, 0, w, h);
+    return c;
+  }
+  // 📸 una sola foto (arma la 1ª vez; captura a partir de la 2ª)
+  async function captureScreen() {
+    if (!(await ensureShare())) return;
+    if (!capVideo.videoWidth) return;  // recién armado: aún sin fotograma
+    try {
+      const blob = await new Promise((res) => grabFrame().toBlob(res, "image/png"));
       if (blob) await uploadFile(new File([blob], "captura-" + Date.now() + ".png", { type: "image/png" }));
     } catch (_) { showToast("No se pudo capturar el fotograma", true); }
+  }
+  // 📹 secuencia: N fotos en unos segundos, montadas en una rejilla numerada
+  let recording = false;
+  async function recordBurst() {
+    if (!(await ensureShare())) return;
+    if (!capVideo.videoWidth) return;  // recién armado
+    if (recording) return;
+    recording = true;
+    const N = 8, GAP = 800;
+    try {
+      const frames = [];
+      for (let i = 0; i < N; i++) {
+        showToast("🎞 Grabando secuencia " + (i + 1) + "/" + N + "…");
+        frames.push(grabFrame());
+        if (i < N - 1) await new Promise((r) => setTimeout(r, GAP));
+      }
+      const cols = Math.ceil(Math.sqrt(N)), rows = Math.ceil(N / cols);
+      const tw = 640, ar = frames[0].height / frames[0].width, th = Math.round(tw * ar), pad = 8;
+      const canvas = document.createElement("canvas");
+      canvas.width = cols * tw + (cols + 1) * pad;
+      canvas.height = rows * th + (rows + 1) * pad;
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#0d0d1a"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+      frames.forEach((f, i) => {
+        const cx = i % cols, cy = Math.floor(i / cols);
+        const x = pad + cx * (tw + pad), y = pad + cy * (th + pad);
+        ctx.drawImage(f, x, y, tw, th);
+        ctx.fillStyle = "rgba(0,0,0,.65)"; ctx.fillRect(x, y, 30, 20);
+        ctx.fillStyle = "#fff"; ctx.font = "bold 13px monospace"; ctx.fillText(String(i + 1), x + 7, y + 14);
+      });
+      showToast("Montando secuencia…");
+      const blob = await new Promise((res) => canvas.toBlob(res, "image/png"));
+      if (blob) await uploadFile(new File([blob], "secuencia-" + Date.now() + ".png", { type: "image/png" }));
+    } catch (_) { showToast("No se pudo grabar la secuencia", true); }
+    finally { recording = false; }
   }
   function stopCapture() {
     try { if (capStream) capStream.getTracks().forEach((t) => t.stop()); } catch (_) {}
     capStream = null; capVideo = null;
-    const b = $("screencap"); if (b) b.classList.remove("cap-on");
+    $("screencap").classList.remove("cap-on");
+    const r = $("screenrec"); if (r) r.classList.remove("cap-on");
   }
 
   // ---------- DICTADO POR VOZ (Web Speech API, gratis) ----------
@@ -506,9 +548,12 @@
     // --- Botón 📋 pegar texto del portapapeles (en móvil no hay Ctrl+V) ---
     $("paste").addEventListener("click", () => { pasteFromClipboard(); if (term) term.focus(); });
 
-    // --- Botón 📸 capturar pantalla y pasársela a Claude (clic derecho = dejar de compartir) ---
+    // --- Botones 📸 foto / 📹 secuencia (clic derecho = dejar de compartir) ---
     $("screencap").addEventListener("click", captureScreen);
-    $("screencap").addEventListener("contextmenu", (e) => { e.preventDefault(); stopCapture(); showToast("Captura desactivada"); });
+    $("screenrec").addEventListener("click", recordBurst);
+    const stopCap = (e) => { e.preventDefault(); stopCapture(); showToast("Captura desactivada"); };
+    $("screencap").addEventListener("contextmenu", stopCap);
+    $("screenrec").addEventListener("contextmenu", stopCap);
 
     if (isMobile()) document.body.classList.add("is-mobile");
     setupKeybar();
