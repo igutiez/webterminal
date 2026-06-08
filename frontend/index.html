@@ -25,7 +25,7 @@
   <script src="https://unpkg.com/xterm-addon-search@0.13.0/lib/xterm-addon-search.js"></script>
   <script src="https://unpkg.com/xterm-addon-canvas@0.5.0/lib/xterm-addon-canvas.js"></script>
 
-  <link rel="stylesheet" href="style.css?v=12" />
+  <link rel="stylesheet" href="style.css?v=14" />
 </head>
 <body>
   <!-- LOGIN -->
@@ -131,8 +131,19 @@
     <div id="terminal-container"></div>
     <input id="img-file" type="file" multiple style="display:none" />
     <div id="toast" class="toast"></div>
+
+    <!-- Overlay de dictado por voz (móvil): micro grande + transcripción en vivo -->
+    <div id="voice-overlay" class="voice-overlay">
+      <div class="voice-mic"><div class="voice-mic-icon">🎤</div></div>
+      <div id="voice-text" class="voice-text">Escuchando…</div>
+      <div class="voice-actions">
+        <button id="voice-cancel" class="voice-btn voice-cancel">Cancelar</button>
+        <button id="voice-paste" class="voice-btn voice-paste">Solo pegar</button>
+        <button id="voice-send" class="voice-btn voice-send">Enviar ⏎</button>
+      </div>
+    </div>
   </div>
 
-  <script src="app.js?v=13"></script>
+  <script src="app.js?v=15"></script>
 </body>
 </html>

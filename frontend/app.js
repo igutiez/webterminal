@@ -246,7 +246,19 @@
   }
 
   // ---------- DICTADO POR VOZ (Web Speech API, gratis) ----------
+  // Escritorio: el 🎤 alterna escucha y el texto reconocido se va tecleando.
+  // Móvil: el 🎤 abre un overlay grande con el micro animado y la transcripción
+  // en vivo; al acabar eliges "Enviar ⏎" (texto + intro), "Solo pegar" (texto
+  // sin intro) o "Cancelar". El reconocimiento es del navegador (gratis, sin API).
   let recognition = null, listening = false;
+  let overlayOpen = false;        // true mientras el overlay móvil está abierto
+  let voiceFinal = "";            // transcripción ya consolidada (overlay)
+  let voiceInterim = "";          // último trozo aún provisional (overlay)
+
+  function isMobile() {
+    return window.matchMedia("(pointer: coarse)").matches || window.innerWidth <= 640;
+  }
+
   function setupVoice() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     const micBtn = $("mic");
@@ -256,23 +268,49 @@
     recognition = new SR();
     recognition.lang = "es-ES";
     recognition.continuous = true;
-    recognition.interimResults = false;
-    recognition.onresult = (ev) => {
-      for (let i = ev.resultIndex; i < ev.results.length; i++) {
-        if (ev.results[i].isFinal) {
-          const txt = (ev.results[i][0].transcript || "").trim();
-          if (txt && ws && ws.readyState === WebSocket.OPEN) ws.send(txt + " ");
-        }
-      }
-    };
+    recognition.interimResults = true;   // necesario para ver el texto en vivo en el móvil
+    recognition.onresult = onVoiceResult;
     recognition.onerror = (e) => {
       showToast("Voz: " + (e.error === "not-allowed" ? "permiso de micrófono denegado" : (e.error || "error")), true);
-      stopVoice();
+      if (overlayOpen) closeOverlay("cancel"); else stopVoice();
     };
-    // Chrome corta tras silencio; si seguimos en modo escucha, reanuda.
+    // Chrome/Safari cortan tras silencio; si seguimos en modo escucha, reanuda.
     recognition.onend = () => { if (listening) { try { recognition.start(); } catch (_) {} } };
-    micBtn.addEventListener("click", () => (listening ? stopVoice() : startVoice()));
+
+    micBtn.addEventListener("click", () => {
+      if (isMobile()) { if (!overlayOpen) openOverlay(); }
+      else (listening ? stopVoice() : startVoice());
+    });
+
+    // Botones del overlay móvil
+    const vs = $("voice-send"), vp = $("voice-paste"), vc = $("voice-cancel");
+    if (vs) vs.addEventListener("click", () => closeOverlay("send"));
+    if (vp) vp.addEventListener("click", () => closeOverlay("paste"));
+    if (vc) vc.addEventListener("click", () => closeOverlay("cancel"));
   }
+
+  function onVoiceResult(ev) {
+    if (overlayOpen) {
+      voiceInterim = "";
+      for (let i = ev.resultIndex; i < ev.results.length; i++) {
+        const r = ev.results[i];
+        if (r.isFinal) voiceFinal += (voiceFinal && !/\s$/.test(voiceFinal) ? " " : "") + (r[0].transcript || "").trim();
+        else voiceInterim += r[0].transcript || "";
+      }
+      const disp = $("voice-text");
+      if (disp) disp.textContent = (voiceFinal + " " + voiceInterim).trim();
+      return;
+    }
+    // Escritorio: teclea cada frase finalizada (con espacio) en la terminal.
+    for (let i = ev.resultIndex; i < ev.results.length; i++) {
+      if (ev.results[i].isFinal) {
+        const txt = (ev.results[i][0].transcript || "").trim();
+        if (txt && ws && ws.readyState === WebSocket.OPEN) ws.send(txt + " ");
+      }
+    }
+  }
+
+  // --- escritorio ---
   function startVoice() {
     if (!recognition) return;
     try { recognition.start(); listening = true; $("mic").classList.add("mic-on"); showToast("🎤 Escuchando… (toca el micro para parar)"); }
@@ -282,6 +320,32 @@
     listening = false;
     try { recognition.stop(); } catch (_) {}
     const m = $("mic"); if (m) m.classList.remove("mic-on");
+  }
+
+  // --- overlay móvil ---
+  function openOverlay() {
+    if (!recognition) return;
+    voiceFinal = ""; voiceInterim = "";
+    overlayOpen = true; listening = true;
+    const disp = $("voice-text"); if (disp) disp.textContent = "Escuchando…";
+    $("voice-overlay").classList.add("show");
+    try { recognition.start(); } catch (_) {}
+  }
+  function closeOverlay(action) {
+    overlayOpen = false; listening = false;
+    try { recognition.stop(); } catch (_) {}
+    $("voice-overlay").classList.remove("show");
+    const txt = (voiceFinal + " " + voiceInterim).trim();
+    voiceFinal = ""; voiceInterim = "";
+    if (action !== "cancel" && txt && ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(txt + " ");
+      // El Enter debe ir en un envío aparte y con un pequeño retardo: si llega
+      // pegado al texto, el shell/TUI (p.ej. Claude) no lo registra como intro.
+      if (action === "send") {
+        setTimeout(() => { if (ws && ws.readyState === WebSocket.OPEN) ws.send("\r"); }, 150);
+      }
+    }
+    if (term) term.focus();
   }
 
   function initTerminal() {

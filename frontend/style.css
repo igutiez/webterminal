@@ -140,3 +140,41 @@ label.remember input { width: auto; margin: 0; accent-color: var(--accent); curs
   #status-text { font-size: 11px; }
   .toast { bottom: calc(14px + env(safe-area-inset-bottom)); font-size: 12px; max-width: 92vw; }
 }
+
+/* ---------- overlay de dictado por voz (móvil) ---------- */
+.voice-overlay {
+  position: fixed; inset: 0; z-index: 100; display: none;
+  flex-direction: column; align-items: center; justify-content: center; gap: 30px;
+  background: rgba(13,13,26,.97); backdrop-filter: blur(3px);
+  padding: 32px 22px;
+  padding-top: max(32px, env(safe-area-inset-top));
+  padding-bottom: max(32px, env(safe-area-inset-bottom));
+}
+.voice-overlay.show { display: flex; }
+
+.voice-mic {
+  width: 128px; height: 128px; border-radius: 50%; flex: 0 0 auto;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(79,195,247,.12); border: 2px solid var(--accent);
+  animation: voicepulse 1.4s infinite;
+}
+.voice-mic-icon { font-size: 56px; line-height: 1; }
+@keyframes voicepulse {
+  0%,100% { box-shadow: 0 0 0 0 rgba(79,195,247,.45); }
+  50%     { box-shadow: 0 0 0 26px rgba(79,195,247,0); }
+}
+
+.voice-text {
+  flex: 0 1 auto; max-height: 38vh; overflow-y: auto; width: 100%; max-width: 560px;
+  text-align: center; font-size: 21px; line-height: 1.5; color: var(--text); word-break: break-word;
+}
+
+.voice-actions { display: flex; gap: 12px; width: 100%; max-width: 560px; flex: 0 0 auto; }
+.voice-btn {
+  flex: 1; padding: 16px 8px; border-radius: 12px; border: 1px solid var(--border);
+  font-family: inherit; font-size: 15px; font-weight: 700; cursor: pointer;
+  background: var(--panel); color: var(--text);
+}
+.voice-cancel { color: var(--muted); flex: 0 0 auto; padding-left: 18px; padding-right: 18px; }
+.voice-paste  { color: var(--accent); border-color: var(--accent); }
+.voice-send   { background: var(--green); color: #08131a; border-color: var(--green); }
