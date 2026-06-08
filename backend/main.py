@@ -16,11 +16,14 @@ import asyncio
 import json
 import logging
 import os
+import posixpath
 import re
 import secrets
+import stat as stat_mod
+from urllib.parse import quote
 
 from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile, WebSocket
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 import auth
@@ -48,6 +51,18 @@ db.init_db()
 app = FastAPI(title="WebTerminal")
 _active = 0
 _lock = asyncio.Lock()
+
+# Registro de sesiones para el explorador de archivos: fsid -> SSHTerminal vivo.
+# El explorador reutiliza la conexión SSH ya autenticada (SFTP), así tiene los
+# mismos permisos que la terminal. Solo funciona mientras la terminal está abierta.
+_fs_sessions: dict = {}
+
+
+def _resolve_term(fsid: str, web_email: str):
+    term = _fs_sessions.get(fsid or "")
+    if term is None or getattr(term, "web_email", None) != web_email:
+        raise HTTPException(status_code=403, detail="Sesión de archivos no válida o caducada")
+    return term
 
 
 @app.middleware("http")
@@ -210,6 +225,7 @@ async def ws_endpoint(websocket: WebSocket):
         _active += 1
 
     term = None
+    fsid = None
     try:
         first = await websocket.receive_text()
         try:
@@ -239,16 +255,238 @@ async def ws_endpoint(websocket: WebSocket):
                 pass
             return
 
+        # Registrar la sesión para el explorador de archivos y avisar al cliente.
+        fsid = secrets.token_urlsafe(16)
+        _fs_sessions[fsid] = term
+        try:
+            await websocket.send_text(json.dumps({"type": "fsid", "fsid": fsid}))
+        except Exception:
+            pass
+
         log.info("session start web=%s ssh_user=%s active=%d", web_email, ssh_user, _active)
         await term.run()
     except Exception as exc:  # noqa: BLE001
         log.info("ws session error web=%s: %s", web_email, exc)
     finally:
+        if fsid is not None:
+            _fs_sessions.pop(fsid, None)
         if term is not None:
             term.close()
         async with _lock:
             _active -= 1
         log.info("session end web=%s active=%d", web_email, _active)
+
+
+# ============================== EXPLORADOR DE ARCHIVOS ==============================
+# Todo va por SFTP sobre la sesión SSH viva (mismos permisos que la terminal).
+# paramiko SFTPClient no es thread-safe -> un canal por operación, cerrado al acabar.
+
+def _entry(attr, name=None):
+    is_dir = stat_mod.S_ISDIR(attr.st_mode)
+    is_link = stat_mod.S_ISLNK(attr.st_mode)
+    return {
+        "name": name if name is not None else attr.filename,
+        "dir": is_dir,
+        "link": is_link,
+        "size": int(getattr(attr, "st_size", 0) or 0),
+        "mtime": int(getattr(attr, "st_mtime", 0) or 0),
+    }
+
+
+def _fs_list(term, path):
+    sftp = term.open_sftp()
+    try:
+        path = sftp.normalize(path or ".")  # "." => home del usuario SSH
+        entries = sftp.listdir_attr(path)
+        items = [_entry(e) for e in entries if not e.filename.startswith(".") or True]
+        # Para los enlaces, intentar saber si apuntan a carpeta
+        for it, e in zip(items, entries):
+            if it["link"]:
+                try:
+                    it["dir"] = stat_mod.S_ISDIR(sftp.stat(posixpath.join(path, e.filename)).st_mode)
+                except Exception:
+                    pass
+        items.sort(key=lambda x: (not x["dir"], x["name"].lower()))
+        parent = posixpath.dirname(path.rstrip("/")) or "/"
+        return {"path": path, "parent": parent, "items": items}
+    finally:
+        sftp.close()
+
+
+@app.get("/files/list")
+async def files_list(fsid: str, path: str = "", authorization: str | None = Header(default=None)):
+    web_email = _bearer(authorization)
+    term = _resolve_term(fsid, web_email)
+    try:
+        return await asyncio.to_thread(_fs_list, term, path)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="No existe esa carpeta")
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Sin permiso para esa carpeta")
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"No se pudo listar: {exc}")
+
+
+@app.get("/files/download")
+async def files_download(fsid: str, path: str, token: str = ""):
+    # El token va por query para poder descargar en streaming directo en el navegador.
+    web_email = auth.verify_token(token)
+    term = _resolve_term(fsid, web_email)
+    sftp = term.open_sftp()
+    try:
+        st = sftp.stat(path)
+    except Exception:
+        sftp.close()
+        raise HTTPException(status_code=404, detail="No existe el archivo")
+    if stat_mod.S_ISDIR(st.st_mode):
+        sftp.close()
+        raise HTTPException(status_code=400, detail="Es una carpeta, no un archivo")
+    try:
+        fh = sftp.open(path, "rb")
+        fh.prefetch(st.st_size)
+    except Exception as exc:  # noqa: BLE001
+        sftp.close()
+        raise HTTPException(status_code=400, detail=f"No se pudo abrir: {exc}")
+
+    def gen():
+        try:
+            while True:
+                chunk = fh.read(262144)  # 256 KB
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            try:
+                fh.close()
+            finally:
+                sftp.close()
+
+    name = posixpath.basename(path) or "archivo"
+    ascii_name = name.encode("ascii", "ignore").decode() or "archivo"
+    disp = f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(name)}"
+    return StreamingResponse(gen(), media_type="application/octet-stream",
+                             headers={"Content-Disposition": disp, "Content-Length": str(st.st_size)})
+
+
+def _fs_put(term, fileobj, remote):
+    sftp = term.open_sftp()
+    try:
+        sftp.putfo(fileobj, remote)
+    finally:
+        sftp.close()
+
+
+@app.post("/files/upload")
+async def files_upload(
+    fsid: str = Form(...),
+    dir: str = Form(...),
+    file: UploadFile = File(...),
+    authorization: str | None = Header(default=None),
+):
+    web_email = _bearer(authorization)
+    term = _resolve_term(fsid, web_email)
+    name = _safe_filename(file.filename)
+    remote = posixpath.join(dir, name)
+    try:
+        file.file.seek(0)
+        await asyncio.to_thread(_fs_put, term, file.file, remote)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"No se pudo subir: {exc}")
+    log.info("sftp upload web=%s -> %s", web_email, remote)
+    return {"ok": True, "name": name, "path": remote}
+
+
+def _fs_mkdir(term, path):
+    sftp = term.open_sftp()
+    try:
+        sftp.mkdir(path)
+    finally:
+        sftp.close()
+
+
+@app.post("/files/mkdir")
+async def files_mkdir(
+    fsid: str = Form(...),
+    dir: str = Form(...),
+    name: str = Form(...),
+    authorization: str | None = Header(default=None),
+):
+    web_email = _bearer(authorization)
+    term = _resolve_term(fsid, web_email)
+    clean = _safe_filename(name)
+    target = posixpath.join(dir, clean)
+    try:
+        await asyncio.to_thread(_fs_mkdir, term, target)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"No se pudo crear la carpeta: {exc}")
+    return {"ok": True, "path": target}
+
+
+def _fs_delete(term, path):
+    sftp = term.open_sftp()
+    try:
+        st = sftp.stat(path)
+        if stat_mod.S_ISDIR(st.st_mode):
+            _rmtree(sftp, path)
+        else:
+            sftp.remove(path)
+    finally:
+        sftp.close()
+
+
+def _rmtree(sftp, path):
+    for e in sftp.listdir_attr(path):
+        child = posixpath.join(path, e.filename)
+        if stat_mod.S_ISDIR(e.st_mode):
+            _rmtree(sftp, child)
+        else:
+            sftp.remove(child)
+    sftp.rmdir(path)
+
+
+@app.post("/files/delete")
+async def files_delete(
+    fsid: str = Form(...),
+    path: str = Form(...),
+    authorization: str | None = Header(default=None),
+):
+    web_email = _bearer(authorization)
+    term = _resolve_term(fsid, web_email)
+    if path in ("/", "", "."):
+        raise HTTPException(status_code=400, detail="Ruta no permitida")
+    try:
+        await asyncio.to_thread(_fs_delete, term, path)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"No se pudo borrar: {exc}")
+    log.info("sftp delete web=%s -> %s", web_email, path)
+    return {"ok": True}
+
+
+def _fs_rename(term, src, dst):
+    sftp = term.open_sftp()
+    try:
+        try:
+            sftp.posix_rename(src, dst)
+        except Exception:
+            sftp.rename(src, dst)
+    finally:
+        sftp.close()
+
+
+@app.post("/files/rename")
+async def files_rename(
+    fsid: str = Form(...),
+    src: str = Form(...),
+    dst: str = Form(...),
+    authorization: str | None = Header(default=None),
+):
+    web_email = _bearer(authorization)
+    term = _resolve_term(fsid, web_email)
+    try:
+        await asyncio.to_thread(_fs_rename, term, src, dst)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"No se pudo renombrar/mover: {exc}")
+    return {"ok": True, "path": dst}
 
 
 @app.get("/manifest.webmanifest", include_in_schema=False)

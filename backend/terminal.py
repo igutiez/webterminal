@@ -241,6 +241,12 @@ class SSHTerminal:
         except Exception:
             pass
 
+    def open_sftp(self):
+        """Abre un canal SFTP nuevo sobre la MISMA conexión SSH (mismos permisos
+        que la terminal). El llamante debe cerrarlo. paramiko SFTPClient no es
+        thread-safe, por eso se usa uno por operación en vez de compartirlo."""
+        return self.client.open_sftp()
+
     def close(self) -> None:
         if self._closed:
             return

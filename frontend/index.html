@@ -25,7 +25,7 @@
   <script src="https://unpkg.com/xterm-addon-search@0.13.0/lib/xterm-addon-search.js"></script>
   <script src="https://unpkg.com/xterm-addon-canvas@0.5.0/lib/xterm-addon-canvas.js"></script>
 
-  <link rel="stylesheet" href="style.css?v=17" />
+  <link rel="stylesheet" href="style.css?v=18" />
 </head>
 <body>
   <!-- LOGIN -->
@@ -121,6 +121,7 @@
       </div>
       <div class="center">WebTerminal</div>
       <div class="right">
+        <button id="files-btn" title="Explorador de archivos (subir / descargar)">📁</button>
         <button id="tmux-menu" title="Sesiones tmux (crear / cambiar / cerrar)">🗂</button>
         <button id="mic" title="Dictar por voz (hablar en vez de teclear)">🎤</button>
         <button id="paste" title="Pegar texto del portapapeles">📋</button>
@@ -164,6 +165,27 @@
       <button id="tmux-new" class="tmux-new">＋ Nueva sesión</button>
     </div>
 
+    <!-- Explorador de archivos (SFTP sobre tu sesión SSH) -->
+    <div id="files-modal" class="files-modal" style="display:none">
+      <div class="files-box">
+        <div class="files-head">
+          <div class="files-title">📁 Archivos</div>
+          <div id="files-crumbs" class="files-crumbs"></div>
+          <div class="files-actions">
+            <button id="files-up" class="fbtn" title="Subir un nivel">↑</button>
+            <button id="files-refresh" class="fbtn" title="Recargar">⟳</button>
+            <button id="files-mkdir" class="fbtn" title="Nueva carpeta">＋📁</button>
+            <button id="files-upload-btn" class="fbtn fbtn-acc" title="Subir archivos">⬆ Subir</button>
+            <button id="files-close" class="fbtn" title="Cerrar">✕</button>
+          </div>
+        </div>
+        <div id="files-list" class="files-list"></div>
+        <div id="files-drop" class="files-drop">Suelta archivos aquí para subirlos</div>
+        <div id="files-status" class="files-status"></div>
+      </div>
+      <input id="files-input" type="file" multiple style="display:none" />
+    </div>
+
     <!-- Overlay de dictado por voz (móvil): micro grande + transcripción en vivo -->
     <div id="voice-overlay" class="voice-overlay">
       <div class="voice-mic"><div class="voice-mic-icon">🎤</div></div>
@@ -176,6 +198,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=17"></script>
+  <script src="app.js?v=18"></script>
 </body>
 </html>

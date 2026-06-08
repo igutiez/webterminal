@@ -10,6 +10,7 @@
   let reconnectAttempts = 0;
   let autoOpenClaude = false;   // si true, ejecuta `claude` al conectar
   let currentSession = null;    // label de la sesión tmux activa (null = principal)
+  let fsid = null;              // id de sesión para el explorador de archivos (SFTP)
 
   const $ = (id) => document.getElementById(id);
   const SCREENS = ["login-screen", "forgot-screen", "reset-screen", "ssh-screen", "account-screen", "terminal-screen"];
@@ -469,7 +470,23 @@
     if (isMobile()) document.body.classList.add("is-mobile");
     setupKeybar();
     setupTmuxMenu();
+    setupFiles();
     setupVoice();
+
+    // OSC 52: cuando tmux (o cualquier app) "copia", emite esta secuencia con el
+    // texto en base64. La capturamos y la metemos en el portapapeles del navegador,
+    // así seleccionar con el ratón dentro de tmux copia solo al soltar.
+    try {
+      term.parser.registerOscHandler(52, (data) => {
+        const i = data.indexOf(";");
+        const b64 = i >= 0 ? data.slice(i + 1) : data;
+        try {
+          const txt = decodeURIComponent(escape(atob(b64)));
+          if (txt) navigator.clipboard.writeText(txt).catch(() => {});
+        } catch (_) {}
+        return true;
+      });
+    } catch (_) {}
   }
 
   // ---------- BARRA DE TECLAS ESPECIALES + VENTANAS TMUX ----------
@@ -569,6 +586,164 @@
     });
   }
 
+  // ---------- EXPLORADOR DE ARCHIVOS (SFTP sobre la sesión SSH) ----------
+  let fsPath = "";  // carpeta actual (vacío = home del usuario)
+  function fsHeaders() { return { Authorization: "Bearer " + jwt }; }
+  function fsStatus(msg, kind) {
+    const s = $("files-status"); if (!s) return;
+    s.textContent = msg || ""; s.className = "files-status" + (kind ? " " + kind : "");
+  }
+  function fsFmtSize(n) {
+    if (n < 1024) return n + " B";
+    const u = ["KB", "MB", "GB", "TB"]; let i = -1;
+    do { n /= 1024; i++; } while (n >= 1024 && i < u.length - 1);
+    return n.toFixed(n < 10 ? 1 : 0) + " " + u[i];
+  }
+  function fsFmtDate(ts) {
+    if (!ts) return "";
+    const d = new Date(ts * 1000);
+    const p = (x) => String(x).padStart(2, "0");
+    return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
+  async function fsList(path) {
+    if (!fsid) { fsStatus("Abre la terminal primero (el explorador usa tu sesión SSH).", "err"); return; }
+    fsStatus("Cargando…");
+    try {
+      const url = "/files/list?fsid=" + encodeURIComponent(fsid) + "&path=" + encodeURIComponent(path || "");
+      const res = await fetch(url, { headers: fsHeaders() });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { fsStatus(d.detail || ("Error " + res.status), "err"); return; }
+      fsPath = d.path;
+      fsRender(d);
+      fsStatus(d.items.length + " elementos");
+    } catch (_) { fsStatus("Error de red al listar", "err"); }
+  }
+  function fsCrumbs(path) {
+    const box = $("files-crumbs"); box.innerHTML = "";
+    const parts = path.split("/").filter(Boolean);
+    const root = document.createElement("span");
+    root.className = "crumb"; root.textContent = "/"; root.title = "Raíz";
+    root.addEventListener("click", () => fsList("/"));
+    box.appendChild(root);
+    let acc = "";
+    parts.forEach((p) => {
+      acc += "/" + p;
+      const sep = document.createElement("span"); sep.className = "sep"; sep.textContent = " ›";
+      const c = document.createElement("span"); c.className = "crumb"; c.textContent = " " + p;
+      const target = acc;
+      c.addEventListener("click", () => fsList(target));
+      box.appendChild(sep); box.appendChild(c);
+    });
+  }
+  function fsJoin(dir, name) { return (dir === "/" ? "" : dir) + "/" + name; }
+  function fsRender(d) {
+    fsCrumbs(d.path);
+    const list = $("files-list"); list.innerHTML = "";
+    if (!d.items.length) { list.innerHTML = '<div class="files-empty">Carpeta vacía</div>'; return; }
+    d.items.forEach((it) => {
+      const full = fsJoin(d.path, it.name);
+      const row = document.createElement("div");
+      row.className = "frow" + (it.dir ? " isdir" : "");
+      const ico = document.createElement("span"); ico.className = "ico"; ico.textContent = it.dir ? "📁" : (it.link ? "🔗" : "📄");
+      const name = document.createElement("span"); name.className = "fname"; name.textContent = it.name; name.title = it.name;
+      if (it.dir) name.addEventListener("click", () => fsList(full));
+      const meta = document.createElement("span"); meta.className = "fmeta";
+      meta.textContent = (it.dir ? "" : fsFmtSize(it.size) + "  ·  ") + fsFmtDate(it.mtime);
+      const ops = document.createElement("span"); ops.className = "fops";
+      if (!it.dir) ops.appendChild(fsOp("⬇", "Descargar", () => fsDownload(full)));
+      ops.appendChild(fsOp("✎", "Renombrar / mover", () => fsRename(full, it.name)));
+      ops.appendChild(fsOp("🗑", "Borrar", () => fsDelete(full, it.name, it.dir), "del"));
+      row.appendChild(ico); row.appendChild(name); row.appendChild(meta); row.appendChild(ops);
+      list.appendChild(row);
+    });
+  }
+  function fsOp(label, title, fn, extra) {
+    const b = document.createElement("button");
+    b.className = "fop" + (extra ? " " + extra : ""); b.textContent = label; b.title = title;
+    b.addEventListener("click", (e) => { e.stopPropagation(); fn(); });
+    return b;
+  }
+  function fsDownload(path) {
+    // Token por query para descargar en streaming directo (sin cargar en memoria JS).
+    const url = "/files/download?fsid=" + encodeURIComponent(fsid)
+      + "&path=" + encodeURIComponent(path) + "&token=" + encodeURIComponent(jwt);
+    const a = document.createElement("a"); a.href = url; a.download = "";
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+  async function fsUploadFiles(files) {
+    if (!files || !files.length) return;
+    for (const f of files) {
+      fsStatus("Subiendo " + f.name + "…");
+      const fd = new FormData();
+      fd.append("fsid", fsid); fd.append("dir", fsPath); fd.append("file", f, f.name);
+      try {
+        const res = await fetch("/files/upload", { method: "POST", headers: fsHeaders(), body: fd });
+        const d = await res.json().catch(() => ({}));
+        if (!res.ok) { fsStatus(d.detail || ("Error al subir " + f.name), "err"); return; }
+      } catch (_) { fsStatus("Error de red al subir " + f.name, "err"); return; }
+    }
+    fsStatus("Subida completada ✓", "ok");
+    fsList(fsPath);
+  }
+  async function fsMkdir() {
+    const name = window.prompt("Nombre de la carpeta nueva:");
+    if (!name) return;
+    const fd = new FormData(); fd.append("fsid", fsid); fd.append("dir", fsPath); fd.append("name", name);
+    const res = await fetch("/files/mkdir", { method: "POST", headers: fsHeaders(), body: fd });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) { fsStatus(d.detail || "No se pudo crear", "err"); return; }
+    fsList(fsPath);
+  }
+  async function fsRename(path, oldName) {
+    const nu = window.prompt("Nuevo nombre o ruta (mover si pones una ruta):", oldName);
+    if (nu === null) return;
+    const val = nu.trim(); if (!val || val === oldName) return;
+    const dst = val.indexOf("/") >= 0 ? (val[0] === "/" ? val : fsJoin(fsPath, val)) : fsJoin(fsPath, val);
+    const fd = new FormData(); fd.append("fsid", fsid); fd.append("src", path); fd.append("dst", dst);
+    const res = await fetch("/files/rename", { method: "POST", headers: fsHeaders(), body: fd });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) { fsStatus(d.detail || "No se pudo renombrar", "err"); return; }
+    fsList(fsPath);
+  }
+  async function fsDelete(path, name, isDir) {
+    if (!window.confirm("¿Borrar " + (isDir ? "la carpeta" : "el archivo") + ' "' + name + '"' + (isDir ? " y todo su contenido" : "") + "?")) return;
+    const fd = new FormData(); fd.append("fsid", fsid); fd.append("path", path);
+    const res = await fetch("/files/delete", { method: "POST", headers: fsHeaders(), body: fd });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) { fsStatus(d.detail || "No se pudo borrar", "err"); return; }
+    fsList(fsPath);
+  }
+  function fsOpen() {
+    $("files-modal").style.display = "flex";
+    fsList(fsPath || "");
+  }
+  function fsClose() { $("files-modal").style.display = "none"; if (term) term.focus(); }
+  function setupFiles() {
+    const btn = $("files-btn"); if (btn) btn.addEventListener("click", fsOpen);
+    const c = $("files-close"); if (c) c.addEventListener("click", fsClose);
+    const up = $("files-up"); if (up) up.addEventListener("click", () => {
+      const parent = fsPath.replace(/\/+$/, "").split("/").slice(0, -1).join("/") || "/";
+      fsList(parent);
+    });
+    const rf = $("files-refresh"); if (rf) rf.addEventListener("click", () => fsList(fsPath));
+    const mk = $("files-mkdir"); if (mk) mk.addEventListener("click", fsMkdir);
+    const ub = $("files-upload-btn"); if (ub) ub.addEventListener("click", () => $("files-input").click());
+    const inp = $("files-input"); if (inp) inp.addEventListener("change", (e) => { fsUploadFiles(e.target.files); e.target.value = ""; });
+    // Cerrar con Escape
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $("files-modal").style.display === "flex") fsClose(); });
+    // Arrastrar y soltar archivos en el modal
+    const modal = $("files-modal");
+    if (modal) {
+      modal.addEventListener("dragover", (e) => { e.preventDefault(); modal.classList.add("dragging"); });
+      modal.addEventListener("dragleave", (e) => { if (e.target === modal) modal.classList.remove("dragging"); });
+      modal.addEventListener("drop", (e) => {
+        e.preventDefault(); modal.classList.remove("dragging");
+        const files = (e.dataTransfer && e.dataTransfer.files) || [];
+        if (files.length) fsUploadFiles(files);
+      });
+    }
+  }
+
   function doFit() { if (!fitAddon) return; fitAddon.fit(); sendResize(); }
   function sendResize() {
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
@@ -592,9 +767,13 @@
     ws.onmessage = (ev) => {
       if (ev.data instanceof ArrayBuffer) { term.write(new Uint8Array(ev.data)); }
       else {
-        // ¿Mensaje de control JSON (lista de sesiones tmux)? Si no, es texto del PTY.
+        // ¿Mensaje de control JSON (sesiones tmux / id de archivos)? Si no, es texto del PTY.
         if (ev.data && ev.data[0] === "{") {
-          try { const m = JSON.parse(ev.data); if (m && m.type === "tmux-sessions") { renderSessions(m.sessions || []); return; } } catch (_) {}
+          try {
+            const m = JSON.parse(ev.data);
+            if (m && m.type === "tmux-sessions") { renderSessions(m.sessions || []); return; }
+            if (m && m.type === "fsid") { fsid = m.fsid; return; }
+          } catch (_) {}
         }
         term.write(ev.data);
       }
