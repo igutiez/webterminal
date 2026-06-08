@@ -267,10 +267,9 @@
     capVideo.srcObject = capStream; capVideo.muted = true;
     try { await capVideo.play(); } catch (_) {}
     $("screencap").classList.add("cap-on");
-    const r = $("screenrec"); if (r) r.classList.add("cap-on");
     const s = $("cap-stop"); if (s) s.style.display = "";
     capStream.getVideoTracks().forEach((t) => t.addEventListener("ended", stopCapture));
-    showToast("🖥️ Compartiendo. Ve a la pestaña del error y vuelve aquí: 📷 foto · 🎥 vídeo · ⏹ parar.");
+    showToast("🖥️ Compartiendo. Ve a la pestaña del error y vuelve aquí: 📷 foto · ⏹ parar.");
     return false;  // recién armada: esta pulsación solo comparte
   }
   function grabFrame() {
@@ -288,46 +287,10 @@
       if (blob) await uploadFile(new File([blob], "captura-" + Date.now() + ".png", { type: "image/png" }));
     } catch (_) { showToast("No se pudo capturar el fotograma", true); }
   }
-  // 📹 secuencia: N fotos en unos segundos, montadas en una rejilla numerada
-  let recording = false;
-  async function recordBurst() {
-    if (!(await ensureShare())) return;
-    if (!capVideo.videoWidth) return;  // recién armado
-    if (recording) return;
-    recording = true;
-    const N = 8, GAP = 800;
-    try {
-      const frames = [];
-      for (let i = 0; i < N; i++) {
-        showToast("🎞 Grabando secuencia " + (i + 1) + "/" + N + "…");
-        frames.push(grabFrame());
-        if (i < N - 1) await new Promise((r) => setTimeout(r, GAP));
-      }
-      const cols = Math.ceil(Math.sqrt(N)), rows = Math.ceil(N / cols);
-      const tw = 640, ar = frames[0].height / frames[0].width, th = Math.round(tw * ar), pad = 8;
-      const canvas = document.createElement("canvas");
-      canvas.width = cols * tw + (cols + 1) * pad;
-      canvas.height = rows * th + (rows + 1) * pad;
-      const ctx = canvas.getContext("2d");
-      ctx.fillStyle = "#0d0d1a"; ctx.fillRect(0, 0, canvas.width, canvas.height);
-      frames.forEach((f, i) => {
-        const cx = i % cols, cy = Math.floor(i / cols);
-        const x = pad + cx * (tw + pad), y = pad + cy * (th + pad);
-        ctx.drawImage(f, x, y, tw, th);
-        ctx.fillStyle = "rgba(0,0,0,.65)"; ctx.fillRect(x, y, 30, 20);
-        ctx.fillStyle = "#fff"; ctx.font = "bold 13px monospace"; ctx.fillText(String(i + 1), x + 7, y + 14);
-      });
-      showToast("Montando secuencia…");
-      const blob = await new Promise((res) => canvas.toBlob(res, "image/png"));
-      if (blob) await uploadFile(new File([blob], "secuencia-" + Date.now() + ".png", { type: "image/png" }));
-    } catch (_) { showToast("No se pudo grabar la secuencia", true); }
-    finally { recording = false; }
-  }
   function stopCapture() {
     try { if (capStream) capStream.getTracks().forEach((t) => t.stop()); } catch (_) {}
     capStream = null; capVideo = null;
     $("screencap").classList.remove("cap-on");
-    const r = $("screenrec"); if (r) r.classList.remove("cap-on");
     const s = $("cap-stop"); if (s) s.style.display = "none";
   }
 
@@ -552,9 +515,8 @@
     // --- Botón 📋 pegar texto del portapapeles (en móvil no hay Ctrl+V) ---
     $("paste").addEventListener("click", () => { pasteFromClipboard(); if (term) term.focus(); });
 
-    // --- Botones 📷 foto / 🎥 vídeo / ⏹ parar ---
+    // --- Botones 📷 foto / ⏹ parar ---
     $("screencap").addEventListener("click", captureScreen);
-    $("screenrec").addEventListener("click", recordBurst);
     $("cap-stop").addEventListener("click", () => { stopCapture(); showToast("Has dejado de compartir la pantalla"); });
 
     if (isMobile()) document.body.classList.add("is-mobile");
