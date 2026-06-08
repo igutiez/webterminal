@@ -216,6 +216,7 @@ async def ws_endpoint(websocket: WebSocket):
             data = json.loads(first)
             ssh_user = (data.get("ssh_user") or "").strip()
             ssh_password = data["password"]
+            session_label = data.get("session")  # opcional: qué sesión tmux abrir
         except (ValueError, KeyError, TypeError):
             await websocket.send_text("\r\n[webterminal] mensaje inicial invalido\r\n")
             await websocket.close(code=4400)
@@ -225,7 +226,8 @@ async def ws_endpoint(websocket: WebSocket):
             await websocket.close(code=4400)
             return
 
-        term = SSHTerminal(ssh_user, ssh_password, websocket, web_email=web_email)
+        term = SSHTerminal(ssh_user, ssh_password, websocket,
+                           web_email=web_email, session_label=session_label)
         try:
             await term.connect()
         except Exception as exc:  # noqa: BLE001

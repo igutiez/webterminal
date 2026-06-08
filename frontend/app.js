@@ -9,7 +9,7 @@
   let term = null, fitAddon = null, searchAddon = null, ws = null;
   let reconnectAttempts = 0;
   let autoOpenClaude = false;   // si true, ejecuta `claude` al conectar
-  const RECONNECT_DELAYS = [1000, 3000, 8000];
+  let currentSession = null;    // label de la sesión tmux activa (null = principal)
 
   const $ = (id) => document.getElementById(id);
   const SCREENS = ["login-screen", "forgot-screen", "reset-screen", "ssh-screen", "account-screen", "terminal-screen"];
@@ -468,6 +468,7 @@
 
     if (isMobile()) document.body.classList.add("is-mobile");
     setupKeybar();
+    setupTmuxMenu();
     setupVoice();
   }
 
@@ -500,6 +501,74 @@
     });
   }
 
+  // ---------- GESTOR DE SESIONES TMUX (varias por usuario, solo las tuyas) ----------
+  // El backend lista/mata SOLO las sesiones cuyo nombre empieza por tu prefijo de
+  // email, así que nunca ves ni tocas las de otra persona. Cambiar de sesión =
+  // reconectar el WS pidiendo esa sesión (tmux new-session -A la crea si no existe).
+  function tmuxPanelOpen() { return $("tmux-panel").style.display !== "none"; }
+  function toggleTmuxPanel(show) {
+    const p = $("tmux-panel"); if (!p) return;
+    const open = (show === undefined) ? !tmuxPanelOpen() : show;
+    p.style.display = open ? "block" : "none";
+    if (open && ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "tmux-list" }));
+  }
+  function renderSessions(list) {
+    const box = $("tmux-list"); if (!box) return;
+    box.innerHTML = "";
+    if (!list.length) { box.innerHTML = '<div class="tmux-empty">Cargando…</div>'; return; }
+    list.forEach((s) => {
+      const row = document.createElement("div");
+      row.className = "tmux-row" + (s.current ? " cur" : "");
+      const name = document.createElement("span");
+      name.className = "name";
+      name.textContent = s.label + (s.current ? "  " : "");
+      if (s.current) { const t = document.createElement("span"); t.className = "tag"; t.textContent = "(actual)"; name.appendChild(t); }
+      name.addEventListener("click", () => { if (!s.current) switchSession(s.label); else toggleTmuxPanel(false); });
+      const kill = document.createElement("button");
+      kill.className = "kill"; kill.textContent = "✕";
+      kill.title = s.current ? "No puedes cerrar la sesión en la que estás" : "Cerrar esta sesión";
+      kill.disabled = !!s.current;
+      kill.addEventListener("click", (e) => { e.stopPropagation(); killSession(s.label); });
+      row.appendChild(name); row.appendChild(kill);
+      box.appendChild(row);
+    });
+  }
+  function switchSession(label) {
+    currentSession = (label === "principal") ? null : label;
+    toggleTmuxPanel(false);
+    if (term) try { term.reset(); } catch (_) {}
+    reconnectNow();
+  }
+  function newSession() {
+    const raw = window.prompt("Nombre de la nueva sesión (p.ej. logs, pruebas):", "");
+    if (raw === null) return;
+    const label = raw.trim();
+    if (!label) return;
+    switchSession(label);
+  }
+  function killSession(label) {
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "tmux-kill", label }));
+    // El backend responde con la lista ya actualizada (renderSessions).
+  }
+  // Reconexión inmediata e intencionada (cambiar de sesión), sin esperar backoff.
+  function reconnectNow() {
+    reconnectAttempts = 0;
+    if (ws) { try { ws.onclose = null; ws.onerror = null; ws.close(); } catch (_) {} ws = null; }
+    connectWS();
+  }
+  function setupTmuxMenu() {
+    const btn = $("tmux-menu");
+    if (btn) btn.addEventListener("click", (e) => { e.stopPropagation(); toggleTmuxPanel(); });
+    const nb = $("tmux-new");
+    if (nb) nb.addEventListener("click", newSession);
+    // Cerrar el panel al hacer clic fuera de él.
+    document.addEventListener("click", (e) => {
+      if (!tmuxPanelOpen()) return;
+      if (e.target.closest("#tmux-panel") || e.target.closest("#tmux-menu")) return;
+      toggleTmuxPanel(false);
+    });
+  }
+
   function doFit() { if (!fitAddon) return; fitAddon.fit(); sendResize(); }
   function sendResize() {
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
@@ -517,12 +586,18 @@
     ws.onopen = () => {
       reconnectAttempts = 0;
       setStatus("connected", "conectado");
-      ws.send(JSON.stringify({ ssh_user: sshUser, password: sshPassword }));
+      ws.send(JSON.stringify({ ssh_user: sshUser, password: sshPassword, session: currentSession || undefined }));
       doFit(); term.focus();
     };
     ws.onmessage = (ev) => {
-      if (ev.data instanceof ArrayBuffer) term.write(new Uint8Array(ev.data));
-      else term.write(ev.data);
+      if (ev.data instanceof ArrayBuffer) { term.write(new Uint8Array(ev.data)); }
+      else {
+        // ¿Mensaje de control JSON (lista de sesiones tmux)? Si no, es texto del PTY.
+        if (ev.data && ev.data[0] === "{") {
+          try { const m = JSON.parse(ev.data); if (m && m.type === "tmux-sessions") { renderSessions(m.sessions || []); return; } } catch (_) {}
+        }
+        term.write(ev.data);
+      }
       // Tras recibir el primer prompt del shell, lanza claude si se pidió.
       if (autoOpenClaude) {
         autoOpenClaude = false;

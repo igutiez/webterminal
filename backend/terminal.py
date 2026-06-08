@@ -36,10 +36,29 @@ TMUX_ENABLED = os.environ.get("WEBTERMINAL_TMUX", "1").lower() not in ("0", "fal
 TMUX_PREFIX = os.environ.get("WEBTERMINAL_TMUX_SESSION", "web")
 
 
-def _session_name(web_email: str | None) -> str:
-    """Nombre de sesión tmux seguro y único por usuario web (email)."""
-    slug = re.sub(r"[^A-Za-z0-9]+", "_", (web_email or "").lower()).strip("_")
+def _slug(s: str | None) -> str:
+    return re.sub(r"[^A-Za-z0-9]+", "_", (s or "").lower()).strip("_")
+
+
+def _user_prefix(web_email: str | None) -> str:
+    """Prefijo común de TODAS las sesiones de un usuario web (su email)."""
+    slug = _slug(web_email)
     return f"{TMUX_PREFIX}-{slug}" if slug else TMUX_PREFIX
+
+
+# Etiqueta visible para la sesión por defecto (la del nombre = prefijo, sin sufijo).
+DEFAULT_LABEL = "principal"
+
+
+def _session_name(web_email: str | None, label: str | None = None) -> str:
+    """Nombre real de la sesión tmux. Sin label (o 'principal') => sesión por
+    defecto del usuario; con label => '<prefijo>-<label saneado>'. Un usuario solo
+    puede nombrar sesiones dentro de SU prefijo (no puede tocar las de otros)."""
+    prefix = _user_prefix(web_email)
+    lab = _slug(label)
+    if not lab or lab == DEFAULT_LABEL:
+        return prefix
+    return f"{prefix}-{lab}"
 
 
 def _startup_command(session: str) -> str | None:
@@ -58,11 +77,14 @@ def _startup_command(session: str) -> str | None:
 class SSHTerminal:
     """One WebSocket <-> one SSH shell. Call ``connect()`` then ``run()``."""
 
-    def __init__(self, username: str, password: str, websocket, web_email: str | None = None):
+    def __init__(self, username: str, password: str, websocket,
+                 web_email: str | None = None, session_label: str | None = None):
         self.username = username
         self.password = password
         self.websocket = websocket
-        self.session = _session_name(web_email)
+        self.web_email = web_email
+        self.prefix = _user_prefix(web_email)
+        self.session = _session_name(web_email, session_label)
         self.client = None
         self.chan = None
         self._closed = False
@@ -140,7 +162,7 @@ class SSHTerminal:
                 text = msg.get("text")
                 raw = msg.get("bytes")
                 if text is not None:
-                    if self._maybe_resize(text):
+                    if await self._maybe_control(text):
                         continue
                     await asyncio.to_thread(self.chan.send, text.encode())
                 elif raw is not None:
@@ -150,19 +172,74 @@ class SSHTerminal:
         except Exception as exc:  # noqa: BLE001
             log.info("ws->ssh ended for %s: %s", self.username, exc)
 
-    def _maybe_resize(self, text: str) -> bool:
-        """Handle ``{"type":"resize","cols":N,"rows":N}``; return True if consumed."""
+    async def _maybe_control(self, text: str) -> bool:
+        """Consume mensajes JSON de control (resize, gestión de sesiones tmux).
+        Devuelve True si el mensaje era de control (y no debe ir al PTY)."""
         try:
             obj = json.loads(text)
         except (ValueError, TypeError):
             return False
-        if isinstance(obj, dict) and obj.get("type") == "resize":
+        if not isinstance(obj, dict):
+            return False
+        t = obj.get("type")
+        if t == "resize":
             try:
                 self.chan.resize_pty(width=int(obj["cols"]), height=int(obj["rows"]))
             except (KeyError, ValueError, TypeError):
                 pass
             return True
+        if t == "tmux-list":
+            await self._send_session_list()
+            return True
+        if t == "tmux-kill":
+            await asyncio.to_thread(self._kill_session, obj.get("label"))
+            await self._send_session_list()
+            return True
         return False
+
+    # ---- gestión de sesiones tmux DEL USUARIO (vía exec sobre su propio SSH) ----
+    def _tmux(self, *args: str) -> str:
+        """Ejecuta `tmux <args>` como el usuario SSH y devuelve su stdout."""
+        cmd = "tmux " + " ".join(shlex.quote(a) for a in args)
+        _in, out, _err = self.client.exec_command(cmd, timeout=5)
+        return out.read().decode("utf-8", "replace")
+
+    def _list_sessions(self) -> list:
+        """Lista SOLO las sesiones de este usuario (por prefijo de email)."""
+        try:
+            raw = self._tmux("list-sessions", "-F", "#{session_name}")
+        except Exception:
+            return []
+        out = []
+        for line in raw.splitlines():
+            name = line.strip()
+            if not name:
+                continue
+            if name == self.prefix:
+                label = DEFAULT_LABEL
+            elif name.startswith(self.prefix + "-"):
+                label = name[len(self.prefix) + 1:]
+            else:
+                continue  # sesión de OTRO usuario: no se lista ni se toca
+            out.append({"label": label, "current": name == self.session})
+        return out
+
+    def _kill_session(self, label) -> None:
+        """Mata una sesión del usuario. Valida que esté dentro de su prefijo."""
+        name = _session_name(self.web_email, label if isinstance(label, str) else None)
+        if name != self.prefix and not name.startswith(self.prefix + "-"):
+            return  # seguridad: nunca fuera del prefijo del usuario
+        try:
+            self._tmux("kill-session", "-t", name)
+        except Exception:
+            pass
+
+    async def _send_session_list(self) -> None:
+        sessions = await asyncio.to_thread(self._list_sessions)
+        try:
+            await self.websocket.send_text(json.dumps({"type": "tmux-sessions", "sessions": sessions}))
+        except Exception:
+            pass
 
     def close(self) -> None:
         if self._closed:
