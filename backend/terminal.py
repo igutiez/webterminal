@@ -7,6 +7,8 @@ the process owner (www-data) is irrelevant to SSH authentication.
 import asyncio
 import json
 import logging
+import os
+import shlex
 
 import paramiko
 
@@ -18,6 +20,28 @@ TERM_TYPE = "xterm-256color"
 DEFAULT_COLS = 220
 DEFAULT_ROWS = 50
 RECV_CHUNK = 1024
+
+# --- Sesión persistente con tmux ---
+# Si está activado (por defecto), en vez de un shell suelto arrancamos dentro de
+# tmux con `new-session -A -s <sesión>`: crea la sesión si no existe y se "engancha"
+# a ella si ya existía. Así, si se cae el wifi o se bloquea el móvil, la sesión sigue
+# viva en el servidor y al reconectar continúas justo donde lo dejaste.
+# Si tmux no estuviera instalado, cae a un shell de login normal (sin persistencia).
+TMUX_ENABLED = os.environ.get("WEBTERMINAL_TMUX", "1").lower() not in ("0", "false", "no", "")
+TMUX_SESSION = os.environ.get("WEBTERMINAL_TMUX_SESSION", "webterm")
+
+
+def _startup_command() -> str | None:
+    """Comando a ejecutar tras abrir el canal. None => shell interactivo normal."""
+    if not TMUX_ENABLED:
+        return None
+    sess = shlex.quote(TMUX_SESSION)
+    # `exec` reemplaza el shell para que, al salir de tmux/del shell, el canal SSH
+    # se cierre limpiamente. Si no hay tmux, abre un shell de login normal.
+    return (
+        f"command -v tmux >/dev/null 2>&1 && "
+        f"exec tmux new-session -A -s {sess} || exec ${{SHELL:-/bin/bash}} -l"
+    )
 
 
 class SSHTerminal:
@@ -47,11 +71,25 @@ class SSHTerminal:
             allow_agent=False,
             timeout=10,
         )
-        chan = client.invoke_shell(term=TERM_TYPE, width=DEFAULT_COLS, height=DEFAULT_ROWS)
+        transport = client.get_transport()
+        if transport is not None:
+            transport.set_keepalive(30)  # mantiene vivo el túnel ante NAT/idle
+
+        start_cmd = _startup_command()
+        if start_cmd:
+            # Canal con pty que ejecuta directamente tmux (sin shell envolvente
+            # visible). Si tmux falta, el propio comando abre un shell de login.
+            chan = transport.open_session()
+            chan.get_pty(term=TERM_TYPE, width=DEFAULT_COLS, height=DEFAULT_ROWS)
+            chan.exec_command(start_cmd)
+            log.info("SSH+tmux shell opened for %s@%s:%s (session=%s)",
+                     self.username, SSH_HOST, SSH_PORT, TMUX_SESSION)
+        else:
+            chan = client.invoke_shell(term=TERM_TYPE, width=DEFAULT_COLS, height=DEFAULT_ROWS)
+            log.info("SSH shell opened for %s@%s:%s", self.username, SSH_HOST, SSH_PORT)
         chan.settimeout(None)
         self.client = client
         self.chan = chan
-        log.info("SSH shell opened for %s@%s:%s", self.username, SSH_HOST, SSH_PORT)
 
     async def run(self) -> None:
         """Pump both directions until either side ends; then clean up."""

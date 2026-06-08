@@ -25,7 +25,7 @@
   <script src="https://unpkg.com/xterm-addon-search@0.13.0/lib/xterm-addon-search.js"></script>
   <script src="https://unpkg.com/xterm-addon-canvas@0.5.0/lib/xterm-addon-canvas.js"></script>
 
-  <link rel="stylesheet" href="style.css?v=14" />
+  <link rel="stylesheet" href="style.css?v=16" />
 </head>
 <body>
   <!-- LOGIN -->
@@ -122,6 +122,7 @@
       <div class="center">WebTerminal</div>
       <div class="right">
         <button id="mic" title="Dictar por voz (hablar en vez de teclear)">🎤</button>
+        <button id="paste" title="Pegar texto del portapapeles">📋</button>
         <button id="img-upload" title="Subir archivo (o pega / arrastra cualquier archivo)">📎</button>
         <button id="font-dec" title="Reducir fuente">&minus;</button>
         <span id="font-size">14</span>
@@ -129,6 +130,29 @@
       </div>
     </div>
     <div id="terminal-container"></div>
+
+    <!-- Barra de teclas especiales + ventanas tmux (sobre todo para móvil) -->
+    <div id="keybar">
+      <button class="kb" data-seq="&#x1b;">Esc</button>
+      <button class="kb" data-seq="&#9;">Tab</button>
+      <button class="kb" id="kb-ctrl" title="Ctrl (pulsa y luego una tecla)">Ctrl</button>
+      <button class="kb" data-seq="&#3;">^C</button>
+      <button class="kb" data-seq="&#x1b;[A">↑</button>
+      <button class="kb" data-seq="&#x1b;[B">↓</button>
+      <button class="kb" data-seq="&#x1b;[D">←</button>
+      <button class="kb" data-seq="&#x1b;[C">→</button>
+      <button class="kb" data-seq="&#x1b;[H">Ini</button>
+      <button class="kb" data-seq="&#x1b;[F">Fin</button>
+      <button class="kb" data-seq="|">|</button>
+      <button class="kb" data-seq="~">~</button>
+      <button class="kb" data-seq="/">/</button>
+      <button class="kb" data-seq="-">-</button>
+      <span class="kb-sep"></span>
+      <button class="kb kb-tmux" data-seq="&#2;c" title="Nueva ventana tmux">➕</button>
+      <button class="kb kb-tmux" data-seq="&#2;p" title="Ventana anterior">◀</button>
+      <button class="kb kb-tmux" data-seq="&#2;n" title="Ventana siguiente">▶</button>
+      <button class="kb kb-tmux" data-seq="&#2;:kill-window&#13;" title="Cerrar ventana actual">✕</button>
+    </div>
     <input id="img-file" type="file" multiple style="display:none" />
     <div id="toast" class="toast"></div>
 
@@ -144,6 +168,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=15"></script>
+  <script src="app.js?v=16"></script>
 </body>
 </html>

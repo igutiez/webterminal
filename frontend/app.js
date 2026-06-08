@@ -367,7 +367,11 @@
     // DOM renderer (default) — scroll y selección fiables. (CanvasAddon daba problemas de scroll.)
     fitAddon.fit();
     requestAnimationFrame(() => { try { fitAddon.fit(); } catch (_) {} });
-    term.onData((d) => { if (ws && ws.readyState === WebSocket.OPEN) ws.send(d); });
+    term.onData((d) => {
+      // Si el "Ctrl" de la barra está armado, aplica Ctrl a la siguiente tecla.
+      if (ctrlPending && d.length === 1) { d = toCtrl(d); setCtrl(false); }
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(d);
+    });
     window.addEventListener("resize", doFit);
 
     const copySel = () => {
@@ -459,7 +463,41 @@
       e.target.value = "";
     });
 
+    // --- Botón 📋 pegar texto del portapapeles (en móvil no hay Ctrl+V) ---
+    $("paste").addEventListener("click", () => { pasteFromClipboard(); if (term) term.focus(); });
+
+    if (isMobile()) document.body.classList.add("is-mobile");
+    setupKeybar();
     setupVoice();
+  }
+
+  // ---------- BARRA DE TECLAS ESPECIALES + VENTANAS TMUX ----------
+  // Cada botón lleva data-seq con la secuencia cruda a enviar al PTY (flechas,
+  // Esc, Tab, prefijos de tmux Ctrl-b=\x02…). "Ctrl" es un modificador pegajoso:
+  // se pulsa y la SIGUIENTE tecla (de la barra o del teclado) sale como Ctrl+X.
+  let ctrlPending = false;
+  function setCtrl(on) {
+    ctrlPending = on;
+    const b = $("kb-ctrl"); if (b) b.classList.toggle("kb-active", on);
+  }
+  function sendRaw(s) { if (s && ws && ws.readyState === WebSocket.OPEN) ws.send(s); }
+  // Convierte un carácter normal en su código de control (a->\x01 … z->\x1a, etc.)
+  function toCtrl(ch) {
+    const c = ch.toUpperCase().charCodeAt(0);
+    if (c >= 64 && c <= 95) return String.fromCharCode(c - 64); // @ A-Z [ \ ] ^ _
+    if (c >= 97 && c <= 122) return String.fromCharCode(c - 96);
+    return ch;
+  }
+  function setupKeybar() {
+    const bar = $("keybar"); if (!bar) return;
+    bar.addEventListener("click", (e) => {
+      const btn = e.target.closest("button.kb"); if (!btn) return;
+      if (btn.id === "kb-ctrl") { setCtrl(!ctrlPending); return; }
+      let seq = btn.getAttribute("data-seq") || "";
+      if (ctrlPending && seq.length === 1) { seq = toCtrl(seq); setCtrl(false); }
+      sendRaw(seq);
+      if (term) term.focus();
+    });
   }
 
   function doFit() { if (!fitAddon) return; fitAddon.fit(); sendResize(); }
@@ -495,14 +533,15 @@
     ws.onerror = () => { try { ws.close(); } catch (_) {} };
   }
 
+  // Reconexión infinita con backoff exponencial (tope 30s) + algo de jitter.
+  // Con tmux la sesión sigue viva en el servidor, así que reintentar siempre
+  // hasta recuperar el wifi/datos es justo lo que queremos en el móvil.
   function scheduleReconnect() {
-    if (reconnectAttempts >= RECONNECT_DELAYS.length) {
-      setStatus("disconnected", "sin conexión — recarga la página");
-      term.write("\r\n\x1b[31m[webterminal] conexión perdida. Recarga la página para reintentar.\x1b[0m\r\n");
-      return;
-    }
-    const delay = RECONNECT_DELAYS[reconnectAttempts++];
-    setStatus("reconnecting", `reconectando en ${delay / 1000}s…`);
+    const n = reconnectAttempts++;
+    let delay = Math.min(30000, 1000 * Math.pow(2, n));   // 1s,2s,4s…30s
+    delay += Math.floor(delay * 0.2 * Math.random());      // jitter ±20%
+    const secs = Math.round(delay / 1000);
+    setStatus("reconnecting", `reconectando en ${secs}s…`);
     setTimeout(connectWS, delay);
   }
 })();
