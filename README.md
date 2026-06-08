@@ -70,26 +70,24 @@ los `.p12`. Tanto `.env` como `secret_key.txt` están en `.gitignore`.
 Los usuarios web deben ser **usuarios reales del sistema** que puedan hacer SSH
 por contraseña (paramiko inicia sesión con ese mismo nombre).
 
+Los usuarios viven en SQLite (`webterminal.db`, módulo `backend/db.py`). El login
+web es por **email**; el SSH usa el usuario+contraseña del sistema (independiente).
+
 ```bash
-# 1) genera el hash bcrypt de la nueva contraseña web
+# 1) alta/actualización del usuario web (email + contraseña)
 sudo /opt/webterminal/venv/bin/python - <<'PY'
-import bcrypt, getpass
-pw = getpass.getpass("Nueva contraseña web: ")
-print(bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode())
+import sys; sys.path.insert(0, "/opt/webterminal/backend")
+import db, getpass
+email = input("Email del nuevo usuario: ").strip().lower()
+db.create_or_update_user(email, getpass.getpass("Contraseña web: "))
+print("Usuario creado/actualizado:", email)
 PY
 
-# 2) edita auth.py y añade la línea en el diccionario USERS:
-sudo nano /opt/webterminal/backend/auth.py
-#    USERS = {
-#        "ubuntu": "$2b$...",
-#        "nuevousuario": "$2b$...EL_HASH...",
-#    }
-
-# 3) (opcional) genera un nuevo .p12 para esa persona — ver setup.sh, paso 8
-
-# 4) reinicia el servicio
-sudo systemctl restart webterminal
+# 2) (opcional) genera un nuevo .p12 para esa persona — ver setup.sh, paso 8
 ```
+
+> No hace falta reiniciar: la BBDD se lee en cada petición. La contraseña se
+> guarda con hash bcrypt.
 
 > `root` en este host es `PermitRootLogin without-password`: **no** puede usarse
 > como usuario web porque no acepta SSH por contraseña. Usa `ubuntu` u otro
@@ -130,13 +128,17 @@ sudo grep -n terminal /etc/cloudflared/config.yml
 
 ## 6. Actualizar contraseñas
 
+Cada usuario puede cambiarla desde **"Mi cuenta"** en la web, o por el flujo de
+**recuperación por email**. Para forzarla a mano:
+
 ```bash
-# generar el hash y pegarlo en USERS dentro de auth.py
 sudo /opt/webterminal/venv/bin/python - <<'PY'
-import bcrypt, getpass
-print(bcrypt.hashpw(getpass.getpass("Nueva contraseña: ").encode(), bcrypt.gensalt()).decode())
+import sys; sys.path.insert(0, "/opt/webterminal/backend")
+import db, getpass
+email = input("Email: ").strip().lower()
+db.set_password(email, getpass.getpass("Nueva contraseña: "))
+print("Contraseña actualizada para", email)
 PY
-sudo systemctl restart webterminal
 ```
 
 ## 7. Activar el mTLS en Cloudflare Access (paso manual)
@@ -149,15 +151,58 @@ sudo systemctl restart webterminal
 4. Guarda. A partir de ahí, sin `.p12` válido Cloudflare ni siquiera deja llegar
    al login web.
 
+## 8. Funciones de la terminal
+
+### Subir archivos (cualquier tipo)
+Pensado para pasarle archivos a Claude (u otra herramienta) sin teclear rutas.
+Tres formas, todas equivalentes:
+
+- **Botón 📎** de la barra superior (selector de archivos, admite varios).
+- **Arrastrar y soltar** sobre la terminal.
+- **Pegar** con `Ctrl+V` (imágenes del portapapeles).
+
+El archivo se sube a `WEBTERMINAL_UPLOAD_DIR` (por defecto
+`/home/ubuntu/imagenes_temp/`, legible por el usuario SSH) conservando su nombre,
+y **su ruta se inserta automáticamente en la terminal** (entrecomillada si tiene
+espacios). Acepta cualquier tipo (pdf, zip, docx, pptx, md, imágenes, vídeo…),
+hasta `WEBTERMINAL_MAX_UPLOAD_MB` MB (100 por defecto). Endpoint:
+`POST /upload` (requiere el JWT de sesión).
+
+> **Limpieza:** el temporal se **vacía cada noche a las 00:00** mediante el cron
+> `/etc/cron.d/webterminal-temp-cleanup`. Los archivos duran el día y desaparecen
+> solos; no se acumulan.
+
+### Dictado por voz 🎤
+Botón 🎤 de la barra: usa la **Web Speech API** del navegador (Chrome, `es-ES`,
+gratis) para transcribir lo que dices e inyectarlo en la terminal. Tócalo para
+empezar/parar; la primera vez pide permiso de micrófono.
+
+> El reconocimiento de Chrome procesa el audio en servidores de Google. Es
+> opt-in (solo al pulsar 🎤). Para STT 100 % local habría que montar Whisper.
+
+### Acceso directo a Claude
+La pantalla de conexión SSH tiene **dos botones**:
+- **Abrir terminal** — abre la shell y nada más.
+- **Abrir + Claude** — abre la shell y lanza `claude` automáticamente.
+
+### Móvil / PWA
+La interfaz es **responsive** y se puede **instalar como app**. En el móvil
+(Chrome/Safari) abre `https://terminal.vistawib.com` → *Añadir a pantalla de
+inicio*. Útil para mandar fotos/archivos o dictar por voz desde el teléfono.
+Aporta `manifest.webmanifest`, `sw.js` (service worker) e iconos.
+
 ## Estructura
 
 ```
 /opt/webterminal/
-├── backend/{main,auth,terminal}.py  requirements.txt
+├── backend/{main,auth,terminal,db,email_service}.py  requirements.txt
+│                                    secret_key.txt  (gitignored — SECRET_KEY)
 ├── frontend/{index.html,app.js,style.css}
-├── certs/ca/{ca.key,ca.crt}         certs/clients/*.p12
+│            manifest.webmanifest  sw.js  icon-192.png  icon-512.png
+├── certs/ca/{ca.key,ca.crt}         certs/clients/*.p12   (gitignored)
 ├── cloudflared/ingress-snippet.yml  (referencia)
-├── webterminal.service              setup.sh   README.md
+├── webterminal.service  setup.sh  README.md  .env.example
+├── webterminal.db                   (SQLite usuarios — gitignored)
 └── credentials.txt                  (root:600 — credenciales web generadas)
 ```
 
