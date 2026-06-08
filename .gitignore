@@ -12,3 +12,4 @@ webterminal.db-*
 *.crt
 secret_key.txt
 backend/secret_key.txt
+.env

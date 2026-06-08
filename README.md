@@ -22,6 +22,35 @@ Chrome (cert .p12)  →  Cloudflare edge (Access mTLS + TLS)
 
 ---
 
+## 0. Primer arranque — secretos y entorno
+
+Los secretos **no** están en el repositorio. Antes de arrancar por primera vez en
+un servidor nuevo hay que definir la clave de firma de los JWT; **si falta, la app
+no arranca** (`RuntimeError: Falta la SECRET_KEY`).
+
+```bash
+# Opción A (la del despliegue actual): archivo local, ignorado por git
+sudo -u www-data sh -c 'openssl rand -hex 32 > /opt/webterminal/backend/secret_key.txt'
+sudo chmod 600 /opt/webterminal/backend/secret_key.txt
+sudo systemctl restart webterminal
+
+# Opción B: variables de entorno mediante un .env cargado por systemd
+cp .env.example .env && nano .env            # rellena WEBTERMINAL_SECRET_KEY
+# luego añade al unit (sudo systemctl edit webterminal):
+#   [Service]
+#   EnvironmentFile=-/opt/webterminal/.env
+```
+
+Todas las variables están documentadas en **[`.env.example`](.env.example)**. La
+única imprescindible es `WEBTERMINAL_SECRET_KEY` (o, en su defecto, el archivo
+`backend/secret_key.txt`). `WEBTERMINAL_P12_PASS` solo la usa `setup.sh` al generar
+los `.p12`. Tanto `.env` como `secret_key.txt` están en `.gitignore`.
+
+> Al rotar `WEBTERMINAL_SECRET_KEY` se invalidan los JWT en circulación: todos los
+> usuarios tendrán que volver a iniciar sesión una vez.
+
+---
+
 ## 1. Instalar el certificado `.p12` en Chrome
 
 1. Copia el `.p12` a tu equipo, p. ej.:
