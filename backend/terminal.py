@@ -8,6 +8,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shlex
 
 import paramiko
@@ -27,15 +28,25 @@ RECV_CHUNK = 1024
 # a ella si ya existía. Así, si se cae el wifi o se bloquea el móvil, la sesión sigue
 # viva en el servidor y al reconectar continúas justo donde lo dejaste.
 # Si tmux no estuviera instalado, cae a un shell de login normal (sin persistencia).
+#
+# La sesión se nombra POR USUARIO WEB (su email): cada persona tiene SU propia
+# sesión, así no comparten pantalla. (Ojo: todos corren como el mismo usuario del
+# sistema, p.ej. `ubuntu`, así que esto separa sesiones, NO es aislamiento de SO.)
 TMUX_ENABLED = os.environ.get("WEBTERMINAL_TMUX", "1").lower() not in ("0", "false", "no", "")
-TMUX_SESSION = os.environ.get("WEBTERMINAL_TMUX_SESSION", "webterm")
+TMUX_PREFIX = os.environ.get("WEBTERMINAL_TMUX_SESSION", "web")
 
 
-def _startup_command() -> str | None:
+def _session_name(web_email: str | None) -> str:
+    """Nombre de sesión tmux seguro y único por usuario web (email)."""
+    slug = re.sub(r"[^A-Za-z0-9]+", "_", (web_email or "").lower()).strip("_")
+    return f"{TMUX_PREFIX}-{slug}" if slug else TMUX_PREFIX
+
+
+def _startup_command(session: str) -> str | None:
     """Comando a ejecutar tras abrir el canal. None => shell interactivo normal."""
     if not TMUX_ENABLED:
         return None
-    sess = shlex.quote(TMUX_SESSION)
+    sess = shlex.quote(session)
     # `exec` reemplaza el shell para que, al salir de tmux/del shell, el canal SSH
     # se cierre limpiamente. Si no hay tmux, abre un shell de login normal.
     return (
@@ -47,10 +58,11 @@ def _startup_command() -> str | None:
 class SSHTerminal:
     """One WebSocket <-> one SSH shell. Call ``connect()`` then ``run()``."""
 
-    def __init__(self, username: str, password: str, websocket):
+    def __init__(self, username: str, password: str, websocket, web_email: str | None = None):
         self.username = username
         self.password = password
         self.websocket = websocket
+        self.session = _session_name(web_email)
         self.client = None
         self.chan = None
         self._closed = False
@@ -75,7 +87,7 @@ class SSHTerminal:
         if transport is not None:
             transport.set_keepalive(30)  # mantiene vivo el túnel ante NAT/idle
 
-        start_cmd = _startup_command()
+        start_cmd = _startup_command(self.session)
         if start_cmd:
             # Canal con pty que ejecuta directamente tmux (sin shell envolvente
             # visible). Si tmux falta, el propio comando abre un shell de login.
@@ -83,7 +95,7 @@ class SSHTerminal:
             chan.get_pty(term=TERM_TYPE, width=DEFAULT_COLS, height=DEFAULT_ROWS)
             chan.exec_command(start_cmd)
             log.info("SSH+tmux shell opened for %s@%s:%s (session=%s)",
-                     self.username, SSH_HOST, SSH_PORT, TMUX_SESSION)
+                     self.username, SSH_HOST, SSH_PORT, self.session)
         else:
             chan = client.invoke_shell(term=TERM_TYPE, width=DEFAULT_COLS, height=DEFAULT_ROWS)
             log.info("SSH shell opened for %s@%s:%s", self.username, SSH_HOST, SSH_PORT)

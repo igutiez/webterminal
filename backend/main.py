@@ -225,7 +225,7 @@ async def ws_endpoint(websocket: WebSocket):
             await websocket.close(code=4400)
             return
 
-        term = SSHTerminal(ssh_user, ssh_password, websocket)
+        term = SSHTerminal(ssh_user, ssh_password, websocket, web_email=web_email)
         try:
             await term.connect()
         except Exception as exc:  # noqa: BLE001
