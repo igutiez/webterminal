@@ -252,7 +252,9 @@
   // capturamos un fotograma de ESA fuente, lo subimos y metemos la ruta para Claude.
   // Clic derecho en 📸 = dejar de compartir. Solo escritorio (iOS no soporta getDisplayMedia).
   let capStream = null, capVideo = null;
-  // Asegura que hay una fuente compartida (la pide la 1ª vez). Devuelve true si lista.
+  // Asegura que hay una fuente compartida. Devuelve true SOLO si ya estaba lista de
+  // antes; si la acaba de pedir (recién armada), devuelve false para que esta misma
+  // pulsación solo comparta (el usuario va a la pestaña y vuelve a pulsar para capturar).
   async function ensureShare() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
       showToast("Tu navegador no permite capturar la pantalla", true); return false;
@@ -266,9 +268,10 @@
     try { await capVideo.play(); } catch (_) {}
     $("screencap").classList.add("cap-on");
     const r = $("screenrec"); if (r) r.classList.add("cap-on");
+    const s = $("cap-stop"); if (s) s.style.display = "";
     capStream.getVideoTracks().forEach((t) => t.addEventListener("ended", stopCapture));
-    showToast("📸 Compartiendo. Ve a la pestaña del error y vuelve aquí para capturar.");
-    return true;
+    showToast("🖥️ Compartiendo. Ve a la pestaña del error y vuelve aquí: 📷 foto · 🎥 vídeo · ⏹ parar.");
+    return false;  // recién armada: esta pulsación solo comparte
   }
   function grabFrame() {
     const w = capVideo.videoWidth || 1920, h = capVideo.videoHeight || 1080;
@@ -325,6 +328,7 @@
     capStream = null; capVideo = null;
     $("screencap").classList.remove("cap-on");
     const r = $("screenrec"); if (r) r.classList.remove("cap-on");
+    const s = $("cap-stop"); if (s) s.style.display = "none";
   }
 
   // ---------- DICTADO POR VOZ (Web Speech API, gratis) ----------
@@ -548,12 +552,10 @@
     // --- Botón 📋 pegar texto del portapapeles (en móvil no hay Ctrl+V) ---
     $("paste").addEventListener("click", () => { pasteFromClipboard(); if (term) term.focus(); });
 
-    // --- Botones 📸 foto / 📹 secuencia (clic derecho = dejar de compartir) ---
+    // --- Botones 📷 foto / 🎥 vídeo / ⏹ parar ---
     $("screencap").addEventListener("click", captureScreen);
     $("screenrec").addEventListener("click", recordBurst);
-    const stopCap = (e) => { e.preventDefault(); stopCapture(); showToast("Captura desactivada"); };
-    $("screencap").addEventListener("contextmenu", stopCap);
-    $("screenrec").addEventListener("contextmenu", stopCap);
+    $("cap-stop").addEventListener("click", () => { stopCapture(); showToast("Has dejado de compartir la pantalla"); });
 
     if (isMobile()) document.body.classList.add("is-mobile");
     setupKeybar();
