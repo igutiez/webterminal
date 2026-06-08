@@ -2,8 +2,17 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>WebTerminal</title>
+
+  <!-- PWA / móvil -->
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <meta name="theme-color" content="#0d0d1a" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="WebTerminal" />
+  <link rel="apple-touch-icon" href="/icon-192.png" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -16,7 +25,7 @@
   <script src="https://unpkg.com/xterm-addon-search@0.13.0/lib/xterm-addon-search.js"></script>
   <script src="https://unpkg.com/xterm-addon-canvas@0.5.0/lib/xterm-addon-canvas.js"></script>
 
-  <link rel="stylesheet" href="style.css?v=11" />
+  <link rel="stylesheet" href="style.css?v=12" />
 </head>
 <body>
   <!-- LOGIN -->
@@ -73,7 +82,10 @@
       <label for="ssh-password">Contraseña SSH</label>
       <input id="ssh-password" type="password" autocomplete="off" required autofocus />
       <label class="remember"><input type="checkbox" id="ssh-remember" /> Recordar credenciales SSH en este equipo</label>
-      <button type="submit" class="btn-primary">Abrir terminal</button>
+      <div class="btn-row">
+        <button type="submit" class="btn-primary">Abrir terminal</button>
+        <button type="button" id="ssh-open-claude" class="btn-primary btn-claude">Abrir + Claude</button>
+      </div>
       <div class="error" id="ssh-error"></div>
       <div class="row-links">
         <a href="#" id="link-account" class="link">Mi cuenta</a>
@@ -109,17 +121,18 @@
       </div>
       <div class="center">WebTerminal</div>
       <div class="right">
-        <button id="img-upload" title="Subir imagen (o pega / arrastra una)">📎</button>
+        <button id="mic" title="Dictar por voz (hablar en vez de teclear)">🎤</button>
+        <button id="img-upload" title="Subir archivo (o pega / arrastra cualquier archivo)">📎</button>
         <button id="font-dec" title="Reducir fuente">&minus;</button>
         <span id="font-size">14</span>
         <button id="font-inc" title="Aumentar fuente">&plus;</button>
       </div>
     </div>
     <div id="terminal-container"></div>
-    <input id="img-file" type="file" accept="image/*" style="display:none" />
+    <input id="img-file" type="file" multiple style="display:none" />
     <div id="toast" class="toast"></div>
   </div>
 
-  <script src="app.js?v=11"></script>
+  <script src="app.js?v=12"></script>
 </body>
 </html>

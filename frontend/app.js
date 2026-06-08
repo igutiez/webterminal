@@ -8,12 +8,18 @@
 
   let term = null, fitAddon = null, searchAddon = null, ws = null;
   let reconnectAttempts = 0;
+  let autoOpenClaude = false;   // si true, ejecuta `claude` al conectar
   const RECONNECT_DELAYS = [1000, 3000, 8000];
 
   const $ = (id) => document.getElementById(id);
   const SCREENS = ["login-screen", "forgot-screen", "reset-screen", "ssh-screen", "account-screen", "terminal-screen"];
   function show(id) {
     SCREENS.forEach((s) => { $(s).style.display = (s === id) ? (s === "terminal-screen" ? "flex" : "flex") : "none"; });
+  }
+
+  // Service worker -> permite instalar como app (PWA) en el móvil
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => { navigator.serviceWorker.register("/sw.js").catch(() => {}); });
   }
 
   // ---------- "Recordar en este equipo" ----------
@@ -131,9 +137,10 @@
   });
 
   // ---------- SSH CONNECT ----------
-  async function startSsh(user, password) {
+  async function startSsh(user, password, openClaude) {
     sshUser = user;
     sshPassword = password;
+    autoOpenClaude = !!openClaude;
     show("terminal-screen");
     // Esperar a que la fuente esté cargada ANTES de medir celdas (si no, la selección se descuadra)
     try { await document.fonts.load('14px "JetBrains Mono"'); await document.fonts.ready; } catch (_) {}
@@ -141,15 +148,18 @@
     connectWS();
   }
 
-  $("ssh-form").addEventListener("submit", (e) => {
-    e.preventDefault();
+  function sshConnectFromForm(openClaude) {
     const user = $("ssh-user").value.trim();
     const password = $("ssh-password").value;
     $("ssh-error").textContent = "";
     if ($("ssh-remember").checked) saveCreds({ ssh_user: user, ssh_password: password });
     else clearCreds(["ssh_user", "ssh_password"]);
-    startSsh(user, password);
-  });
+    startSsh(user, password, openClaude);
+  }
+
+  // Enter o "Abrir terminal" -> solo conecta. "Abrir + Claude" -> conecta y lanza claude.
+  $("ssh-form").addEventListener("submit", (e) => { e.preventDefault(); sshConnectFromForm(false); });
+  $("ssh-open-claude").addEventListener("click", (e) => { e.preventDefault(); sshConnectFromForm(true); });
   $("link-logout").addEventListener("click", (e) => { e.preventDefault(); logout(); });
 
   function logout() {
@@ -213,22 +223,67 @@
     toastTimer = setTimeout(() => { t.className = "toast"; }, 3500);
   }
 
-  async function uploadImage(blob) {
-    if (!blob || !jwt) return;
-    if (!blob.type || !blob.type.startsWith("image/")) { showToast("Solo se permiten imágenes", true); return; }
-    showToast("Subiendo imagen…");
-    const ext = (blob.type.split("/")[1] || "png").replace("jpeg", "jpg");
+  async function uploadFile(file) {
+    if (!file || !jwt) return;
+    let name = file.name;
+    if (!name) {  // Blob pegado del portapapeles (sin nombre)
+      const ext = ((file.type || "").split("/")[1] || "bin").replace("jpeg", "jpg");
+      name = "pegado-" + Date.now() + "." + ext;
+    }
+    showToast("Subiendo " + name + "…");
     const fd = new FormData();
-    fd.append("file", blob, "paste." + ext);
+    fd.append("file", file, name);
     try {
-      const res = await fetch("/upload-image", { method: "POST", headers: { Authorization: "Bearer " + jwt }, body: fd });
+      const res = await fetch("/upload", { method: "POST", headers: { Authorization: "Bearer " + jwt }, body: fd });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) { showToast(d.detail || ("Error al subir (" + res.status + ")"), true); return; }
-      // Inyectar la ruta en la terminal (como si se tecleara) para que Claude la lea.
-      if (ws && ws.readyState === WebSocket.OPEN) ws.send(d.path + " ");
-      showToast("Imagen lista ➜ ruta insertada en la terminal");
+      // Inyectar la ruta en la terminal (como si se tecleara) para que Claude la abra.
+      // Entrecomillamos si tiene espacios para que sea válida también en el shell.
+      const p = d.path;
+      const arg = /\s/.test(p) ? "'" + p.replace(/'/g, "'\\''") + "'" : p;
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(arg + " ");
+      showToast("Archivo listo ➜ " + d.name);
       if (term) term.focus();
-    } catch (_) { showToast("Error de red al subir la imagen", true); }
+    } catch (_) { showToast("Error de red al subir el archivo", true); }
+  }
+
+  // ---------- DICTADO POR VOZ (Web Speech API, gratis) ----------
+  let recognition = null, listening = false;
+  function setupVoice() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const micBtn = $("mic");
+    if (!micBtn) return;
+    if (!SR) { micBtn.disabled = true; micBtn.title = "Tu navegador no soporta dictado por voz"; return; }
+    if (recognition) return;  // ya inicializado
+    recognition = new SR();
+    recognition.lang = "es-ES";
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.onresult = (ev) => {
+      for (let i = ev.resultIndex; i < ev.results.length; i++) {
+        if (ev.results[i].isFinal) {
+          const txt = (ev.results[i][0].transcript || "").trim();
+          if (txt && ws && ws.readyState === WebSocket.OPEN) ws.send(txt + " ");
+        }
+      }
+    };
+    recognition.onerror = (e) => {
+      showToast("Voz: " + (e.error === "not-allowed" ? "permiso de micrófono denegado" : (e.error || "error")), true);
+      stopVoice();
+    };
+    // Chrome corta tras silencio; si seguimos en modo escucha, reanuda.
+    recognition.onend = () => { if (listening) { try { recognition.start(); } catch (_) {} } };
+    micBtn.addEventListener("click", () => (listening ? stopVoice() : startVoice()));
+  }
+  function startVoice() {
+    if (!recognition) return;
+    try { recognition.start(); listening = true; $("mic").classList.add("mic-on"); showToast("🎤 Escuchando… (toca el micro para parar)"); }
+    catch (_) {}
+  }
+  function stopVoice() {
+    listening = false;
+    try { recognition.stop(); } catch (_) {}
+    const m = $("mic"); if (m) m.classList.remove("mic-on");
   }
 
   function initTerminal() {
@@ -267,7 +322,7 @@
           const items = await navigator.clipboard.read();
           for (const it of items) {
             const imgType = (it.types || []).find((t) => t.startsWith("image/"));
-            if (imgType) { const blob = await it.getType(imgType); await uploadImage(blob); return; }
+            if (imgType) { const blob = await it.getType(imgType); await uploadFile(blob); return; }
           }
         }
       } catch (_) { /* sin permiso de imagen -> probamos texto */ }
@@ -318,29 +373,31 @@
           e.preventDefault();
           e.stopPropagation();
           const blob = it.getAsFile();
-          if (blob) uploadImage(blob);
+          if (blob) uploadFile(blob);
           return;
         }
       }
     }, true);
 
-    // --- Arrastrar y soltar imagen sobre la terminal ---
+    // --- Arrastrar y soltar CUALQUIER archivo sobre la terminal ---
     const tc = $("terminal-container");
     tc.addEventListener("dragover", (e) => { e.preventDefault(); tc.classList.add("drag-over"); });
     tc.addEventListener("dragleave", () => tc.classList.remove("drag-over"));
     tc.addEventListener("drop", (e) => {
       e.preventDefault(); tc.classList.remove("drag-over");
       const files = (e.dataTransfer && e.dataTransfer.files) || [];
-      for (const f of files) { if (f.type && f.type.startsWith("image/")) { uploadImage(f); break; } }
+      for (const f of files) uploadFile(f);
     });
 
-    // --- Botón 📎 + input de archivo ---
+    // --- Botón 📎 + input de archivo (cualquier tipo, varios a la vez) ---
     $("img-upload").addEventListener("click", () => $("img-file").click());
     $("img-file").addEventListener("change", (e) => {
-      const f = e.target.files && e.target.files[0];
-      if (f) uploadImage(f);
+      const files = e.target.files || [];
+      for (const f of files) uploadFile(f);
       e.target.value = "";
     });
+
+    setupVoice();
   }
 
   function doFit() { if (!fitAddon) return; fitAddon.fit(); sendResize(); }
@@ -366,6 +423,11 @@
     ws.onmessage = (ev) => {
       if (ev.data instanceof ArrayBuffer) term.write(new Uint8Array(ev.data));
       else term.write(ev.data);
+      // Tras recibir el primer prompt del shell, lanza claude si se pidió.
+      if (autoOpenClaude) {
+        autoOpenClaude = false;
+        setTimeout(() => { if (ws && ws.readyState === WebSocket.OPEN) ws.send("claude\r"); }, 700);
+      }
     };
     ws.onclose = () => { setStatus("disconnected", "desconectado"); scheduleReconnect(); };
     ws.onerror = () => { try { ws.close(); } catch (_) {} };

@@ -16,10 +16,11 @@ import asyncio
 import json
 import logging
 import os
+import re
 import secrets
-import time
 
 from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile, WebSocket
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 import auth
@@ -36,19 +37,11 @@ MAX_CONNECTIONS = 2
 RESET_TTL_MIN = 30
 MIN_PW_LEN = 8
 
-# Subida de imágenes para que Claude (en la sesión SSH) pueda verlas.
-# El archivo se guarda aquí y la RUTA se inyecta en la terminal. Se auto-limpian
-# por antigüedad en cada subida (no podemos saber el instante exacto de "uso").
+# Subida de archivos (cualquier tipo) para que Claude (en la sesión SSH) pueda
+# abrirlos. El archivo se guarda aquí y la RUTA se inyecta en la terminal.
+# Limpieza: un cron borra el contenido cada noche a las 00:00 (ver README/setup).
 UPLOAD_DIR = os.environ.get("WEBTERMINAL_UPLOAD_DIR", "/home/ubuntu/imagenes_temp")
-UPLOAD_TTL_SEC = int(os.environ.get("WEBTERMINAL_UPLOAD_TTL", str(2 * 3600)))
-MAX_UPLOAD_BYTES = 12 * 1024 * 1024
-ALLOWED_IMAGE_EXT = {
-    "image/png": ".png",
-    "image/jpeg": ".jpg",
-    "image/jpg": ".jpg",
-    "image/gif": ".gif",
-    "image/webp": ".webp",
-}
+MAX_UPLOAD_BYTES = int(os.environ.get("WEBTERMINAL_MAX_UPLOAD_MB", "100")) * 1024 * 1024
 
 db.init_db()
 
@@ -80,23 +73,22 @@ def _bearer(authorization: str | None) -> str:
     return auth.verify_token(authorization[7:])
 
 
-def _purge_old_uploads() -> None:
-    """Borra imágenes subidas con más de UPLOAD_TTL_SEC de antigüedad."""
-    try:
-        now = time.time()
-        with os.scandir(UPLOAD_DIR) as it:
-            for entry in it:
-                if not entry.name.startswith("img-") or not entry.is_file():
-                    continue
-                try:
-                    if now - entry.stat().st_mtime > UPLOAD_TTL_SEC:
-                        os.unlink(entry.path)
-                except OSError:
-                    pass
-    except FileNotFoundError:
-        pass
-    except Exception as exc:  # noqa: BLE001
-        log.info("purge uploads error: %s", exc)
+def _safe_filename(name: str) -> str:
+    """Nombre de archivo seguro: sin rutas ni caracteres raros, conserva extensión."""
+    name = os.path.basename((name or "").strip())
+    name = re.sub(r"[^A-Za-z0-9._ -]", "_", name).lstrip(".")
+    return name[:120] or "archivo"
+
+
+def _unique_path(directory: str, name: str) -> str:
+    """Evita pisar archivos: añade -1, -2… antes de la extensión si ya existe."""
+    base, ext = os.path.splitext(name)
+    candidate = os.path.join(directory, name)
+    i = 1
+    while os.path.exists(candidate):
+        candidate = os.path.join(directory, f"{base}-{i}{ext}")
+        i += 1
+    return candidate
 
 
 @app.post("/login")
@@ -171,37 +163,33 @@ async def account_update(
     return {"ok": True, "token": auth.create_access_token(email), "email": email}
 
 
-@app.post("/upload-image")
-async def upload_image(
+@app.post("/upload")
+async def upload_file(
     authorization: str | None = Header(default=None),
     file: UploadFile = File(...),
 ):
-    """Recibe una imagen (autenticado), la guarda en UPLOAD_DIR y devuelve su ruta.
-    La ruta se inyecta luego en la terminal para que Claude pueda leer la imagen."""
+    """Recibe un archivo de CUALQUIER tipo (autenticado), lo guarda en UPLOAD_DIR
+    y devuelve su ruta. La ruta se inyecta en la terminal para que Claude lo abra.
+    El contenido se borra entero cada noche a las 00:00 (cron)."""
     web_email = _bearer(authorization)
-    ext = ALLOWED_IMAGE_EXT.get((file.content_type or "").lower())
-    if not ext:
-        raise HTTPException(status_code=400, detail="Tipo de imagen no soportado")
 
     data = await file.read(MAX_UPLOAD_BYTES + 1)
     if len(data) > MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=413, detail="Imagen demasiado grande (máx 12 MB)")
+        mb = MAX_UPLOAD_BYTES // (1024 * 1024)
+        raise HTTPException(status_code=413, detail=f"Archivo demasiado grande (máx {mb} MB)")
     if not data:
-        raise HTTPException(status_code=400, detail="Imagen vacía")
+        raise HTTPException(status_code=400, detail="Archivo vacío")
 
     os.makedirs(UPLOAD_DIR, exist_ok=True)
-    _purge_old_uploads()  # limpiar lo viejo en cada subida
-
-    name = f"img-{int(time.time() * 1000)}-{secrets.token_hex(4)}{ext}"
-    path = os.path.join(UPLOAD_DIR, name)
+    path = _unique_path(UPLOAD_DIR, _safe_filename(file.filename))
     with open(path, "wb") as fh:
         fh.write(data)
     try:
         os.chmod(path, 0o644)  # legible por el usuario SSH (Claude)
     except OSError:
         pass
-    log.info("image uploaded web=%s -> %s (%d bytes)", web_email, path, len(data))
-    return {"path": path, "name": name}
+    log.info("file uploaded web=%s -> %s (%d bytes)", web_email, path, len(data))
+    return {"path": path, "name": os.path.basename(path)}
 
 
 @app.websocket("/ws")
@@ -259,6 +247,14 @@ async def ws_endpoint(websocket: WebSocket):
         async with _lock:
             _active -= 1
         log.info("session end web=%s active=%d", web_email, _active)
+
+
+@app.get("/manifest.webmanifest", include_in_schema=False)
+async def manifest():
+    return FileResponse(
+        os.path.join(FRONTEND_DIR, "manifest.webmanifest"),
+        media_type="application/manifest+json",
+    )
 
 
 app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="static")
