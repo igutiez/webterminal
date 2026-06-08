@@ -1,6 +1,6 @@
 {
-  "name": "WebTerminal",
-  "short_name": "WebTerminal",
+  "name": "WibTerminal",
+  "short_name": "WibTerminal",
   "description": "Terminal SSH web — sube archivos y habla con Claude",
   "start_url": "/",
   "scope": "/",

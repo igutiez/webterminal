@@ -246,6 +246,45 @@
     } catch (_) { showToast("Error de red al subir el archivo", true); }
   }
 
+  // ---------- CAPTURA DE PANTALLA (para que Claude "vea" otra pestaña/ventana) ----------
+  // Modelo "armado": como el error está en OTRA pestaña, primero eliges qué compartir
+  // (queda compartiéndose aunque cambies de pestaña). Luego, cada vez que pulsas 📸,
+  // capturamos un fotograma de ESA fuente, lo subimos y metemos la ruta para Claude.
+  // Clic derecho en 📸 = dejar de compartir. Solo escritorio (iOS no soporta getDisplayMedia).
+  let capStream = null, capVideo = null;
+  async function captureScreen() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+      showToast("Tu navegador no permite capturar la pantalla", true); return;
+    }
+    // 1ª vez: elegir la fuente y quedar armado.
+    if (!capStream) {
+      try {
+        capStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      } catch (_) { return; }  // el usuario canceló
+      capVideo = document.createElement("video");
+      capVideo.srcObject = capStream; capVideo.muted = true;
+      try { await capVideo.play(); } catch (_) {}
+      const b = $("screencap"); if (b) b.classList.add("cap-on");
+      capStream.getVideoTracks().forEach((t) => t.addEventListener("ended", stopCapture));
+      showToast("📸 Compartiendo. Ve a la pestaña del error y vuelve aquí; pulsa 📸 para capturar.");
+      return;
+    }
+    // Ya armado: capturar un fotograma de la fuente compartida.
+    try {
+      const w = capVideo.videoWidth || 1920, h = capVideo.videoHeight || 1080;
+      const canvas = document.createElement("canvas");
+      canvas.width = w; canvas.height = h;
+      canvas.getContext("2d").drawImage(capVideo, 0, 0, w, h);
+      const blob = await new Promise((res) => canvas.toBlob(res, "image/png"));
+      if (blob) await uploadFile(new File([blob], "captura-" + Date.now() + ".png", { type: "image/png" }));
+    } catch (_) { showToast("No se pudo capturar el fotograma", true); }
+  }
+  function stopCapture() {
+    try { if (capStream) capStream.getTracks().forEach((t) => t.stop()); } catch (_) {}
+    capStream = null; capVideo = null;
+    const b = $("screencap"); if (b) b.classList.remove("cap-on");
+  }
+
   // ---------- DICTADO POR VOZ (Web Speech API, gratis) ----------
   // Escritorio: el 🎤 alterna escucha y el texto reconocido se va tecleando.
   // Móvil: el 🎤 abre un overlay grande con el micro animado y la transcripción
@@ -466,6 +505,10 @@
 
     // --- Botón 📋 pegar texto del portapapeles (en móvil no hay Ctrl+V) ---
     $("paste").addEventListener("click", () => { pasteFromClipboard(); if (term) term.focus(); });
+
+    // --- Botón 📸 capturar pantalla y pasársela a Claude (clic derecho = dejar de compartir) ---
+    $("screencap").addEventListener("click", captureScreen);
+    $("screencap").addEventListener("contextmenu", (e) => { e.preventDefault(); stopCapture(); showToast("Captura desactivada"); });
 
     if (isMobile()) document.body.classList.add("is-mobile");
     setupKeybar();

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <title>WebTerminal</title>
+  <title>WibTerminal</title>
 
   <!-- PWA / móvil -->
   <link rel="manifest" href="/manifest.webmanifest" />
@@ -11,7 +11,7 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="WebTerminal" />
+  <meta name="apple-mobile-web-app-title" content="WibTerminal" />
   <link rel="apple-touch-icon" href="/icon-192.png" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -25,13 +25,13 @@
   <script src="https://unpkg.com/xterm-addon-search@0.13.0/lib/xterm-addon-search.js"></script>
   <script src="https://unpkg.com/xterm-addon-canvas@0.5.0/lib/xterm-addon-canvas.js"></script>
 
-  <link rel="stylesheet" href="style.css?v=19" />
+  <link rel="stylesheet" href="style.css?v=20" />
 </head>
 <body>
   <!-- LOGIN -->
   <div id="login-screen" class="screen card-screen">
     <form id="login-form" class="card" autocomplete="on">
-      <h1>WebTerminal</h1>
+      <h1>WibTerminal</h1>
       <p class="subtitle">Acceso seguro</p>
       <label for="login-email">Email</label>
       <input id="login-email" name="email" type="email" autocomplete="username" required autofocus />
@@ -119,9 +119,10 @@
         <span id="status-dot" class="dot dot-red"></span>
         <span id="status-text">desconectado</span>
       </div>
-      <div class="center">WebTerminal</div>
+      <div class="center">WibTerminal</div>
       <div class="right">
         <button id="files-btn" title="Explorador de archivos (subir / descargar)">📁</button>
+        <button id="screencap" title="Capturar pantalla y pasársela a Claude">📸</button>
         <button id="tmux-menu" title="Sesiones tmux (crear / cambiar / cerrar)">🗂</button>
         <button id="mic" title="Dictar por voz (hablar en vez de teclear)">🎤</button>
         <button id="paste" title="Pegar texto del portapapeles">📋</button>
@@ -198,6 +199,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=19"></script>
+  <script src="app.js?v=20"></script>
 </body>
 </html>
