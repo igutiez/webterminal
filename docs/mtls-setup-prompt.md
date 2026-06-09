@@ -1,30 +1,22 @@
-# Prompt para Claude — montar acceso mTLS (Cloudflare Access + .p12)
+Eres Claude Code con acceso por terminal a este servidor. Hay un webterminal desplegado
+(FastAPI/uvicorn detrás de un **Cloudflare Tunnel**) y hay que protegerlo con
+**Cloudflare Access + mTLS (certificado de cliente .p12)**: sin el certificado en el
+navegador, Cloudflare devuelve **403** y no se llega ni al servidor; con el `.p12`
+importado (+ el login web de la propia app) se entra.
 
-> Pégale TODO lo de abajo (desde "Eres Claude Code…") a Claude (Opus) ejecutándose
-> con acceso por terminal al servidor donde está el webterminal. Claude tendrá la
-> **API global de Cloudflare** de la cuenta (se la dará el usuario).
-
----
-
-Eres Claude Code con acceso por terminal al servidor de mi amigo. Tiene desplegado un
-webterminal (FastAPI/uvicorn detrás de un **Cloudflare Tunnel**) y quiere protegerlo con
-**Cloudflare Access + mTLS (certificado de cliente .p12)**, exactamente igual que en
-terminal.messor.app: sin el certificado en el navegador, Cloudflare devuelve **403** y no
-se llega ni al servidor; con el `.p12` importado (+ el login web de la propia app), se entra.
-
-Su dominio es **terminal.albertovh71.com**.
+El dominio es **terminal.albertovh71.com**.
 
 Tendrás la **API global de Cloudflare** de la cuenta, así que automatiza la parte de
-Cloudflare por API (no hace falta el panel). Objetivo final: dejar el mTLS montado de punta
-a punta y entregarle el `.p12` + su contraseña.
+Cloudflare por API. Objetivo final: dejar el mTLS montado de punta a punta y entregar el
+`.p12` + su contraseña.
 
-## Paso 0 — Pídele estos datos antes de tocar nada
-1. **Email de la cuenta de Cloudflare** y la **Global API Key** (la usarás en cabeceras
+## Paso 0 — Pide estos datos antes de tocar nada
+1. **Email de la cuenta de Cloudflare** y la **Global API Key** (se usan en cabeceras
    `X-Auth-Email` / `X-Auth-Key`). Es una credencial MUY potente: guárdala solo en variables
    de entorno de la sesión, no la escribas en archivos ni en logs, y avisa de rotarla al final.
-2. ¿En qué **puerto local** escucha el webterminal? (en messor es `127.0.0.1:8765`).
-3. ¿Ya tiene un **Cloudflare Tunnel** (`cloudflared`) corriendo? Nombre del túnel y ruta de
-   su `config.yml` (típico `/etc/cloudflared/config.yml`).
+2. ¿En qué **puerto local** escucha el webterminal? (p.ej. `127.0.0.1:8765`).
+3. ¿Ya hay un **Cloudflare Tunnel** (`cloudflared`) corriendo? Nombre del túnel y ruta de su
+   `config.yml` (típico `/etc/cloudflared/config.yml`).
 4. ¿Qué **email(s)** podrán entrar (para la política de Access)?
 5. Nombre de usuario para el certificado de cliente (p.ej. `alberto`).
 
@@ -55,14 +47,14 @@ sudo openssl pkcs12 -export -in "$BASE/clients/$U.crt" -inkey "$BASE/clients/$U.
   -certfile "$BASE/ca/ca.crt" -out "$BASE/clients/$U.p12" -passout pass:"$P12_PASS"
 
 sudo chmod 600 "$BASE/ca/ca.key"
-echo ">> Entrega a tu amigo: $BASE/clients/$U.p12"
+echo ">> Entregar: $BASE/clients/$U.p12"
 echo ">> Contraseña del .p12: $P12_PASS"
 ```
-Apunta y enséñale la ruta del `$U.p12` y su **contraseña**.
+Apunta y comunica la ruta del `$U.p12` y su **contraseña**.
 
 ## Paso 2 — Túnel: exponer el servicio en terminal.albertovh71.com
-En el `config.yml` de cloudflared, añade la regla de ingress apuntando al puerto local
-del webterminal, ANTES de la regla `- service: http_status:404`:
+En el `config.yml` de cloudflared, añade la regla de ingress apuntando al puerto local del
+webterminal, ANTES de la regla `- service: http_status:404`:
 
 ```yaml
 ingress:
@@ -114,7 +106,7 @@ echo "app_id=$APP"
 ```bash
 api -X POST "https://api.cloudflare.com/client/v4/accounts/$ACC/access/apps/$APP/policies" \
   --data '{"name":"mTLS + email","decision":"allow",
-    "include":[{"email":{"email":"amigo@ejemplo.com"}}],
+    "include":[{"email":{"email":"usuario@ejemplo.com"}}],
     "require":[{"certificate":{}}]}'
 ```
 > Lógica de Access: `include` = OR (basta uno), `require` = AND (obligatorio). Así se exige
@@ -123,7 +115,7 @@ api -X POST "https://api.cloudflare.com/client/v4/accounts/$ACC/access/apps/$APP
 
 Revisa que cada llamada devuelva `"success": true`.
 
-## Paso 4 — Importar el .p12 en el navegador del amigo
+## Paso 4 — Importar el .p12 en el navegador
 - Chrome/Edge: `chrome://settings/certificates` → *Tus certificados* → **Importar** →
   elige `$U.p12` → pon la contraseña del Paso 1.
 - macOS/Safari: doble clic en el `.p12` → importar al Llavero.
@@ -139,9 +131,9 @@ navegador pedirá elegir el certificado y entrará (luego, el login web de la pr
 
 ## Notas finales
 - **Seguridad**: la Global API Key da control total de la cuenta. Úsala solo en esta sesión,
-  no la dejes en archivos ni en el historial, y dile al usuario que la **rote** después si
-  quiere (o que en el futuro use un API Token con permisos mínimos: *Access: Apps and Policies*
-  + *Access: Certificates* + *DNS*).
+  no la dejes en archivos ni en el historial, y recomienda **rotarla** después (o usar en el
+  futuro un API Token con permisos mínimos: *Access: Apps and Policies* + *Access: Certificates*
+  + *DNS*).
 - **No subir a git**: `ca.key` y los `.p12` son secretos. Añade al `.gitignore`:
   `*.p12`, `*.key`, `*.csr`, `certs/`.
 - **Más usuarios**: repite solo el bloque "certificado de cliente" del Paso 1 con otro `$U`;
