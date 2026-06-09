@@ -90,6 +90,13 @@ label.remember input { width: auto; margin: 0; accent-color: var(--accent); curs
 /* Fila que contiene la barra lateral de archivos + la terminal */
 #term-body { flex: 1 1 auto; min-height: 0; display: flex; position: relative; }
 
+/* Área principal (a la derecha de la barra de archivos): pestañas + panel activo */
+#main-area {
+  flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column;
+}
+#panes { flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; position: relative; }
+#panes > * { flex: 1 1 auto; min-width: 0; min-height: 0; }
+
 #terminal-container {
   flex: 1 1 auto; min-height: 0; min-width: 0; width: auto; position: relative;
   overflow: hidden; padding: 4px 6px; background: #282a36;
@@ -309,4 +316,111 @@ body.files-open .files-side { display: flex; }
   }
   .frow .fops { opacity: 1; }
   .fop { width: 30px; height: 28px; }
+}
+
+/* ---------- pestañas (terminal + visores de archivos) ---------- */
+.tabs {
+  flex: 0 0 auto; display: flex; align-items: stretch; gap: 1px; min-width: 0;
+  background: var(--bg); border-bottom: 1px solid var(--border);
+  overflow-x: auto; overflow-y: hidden; scrollbar-width: thin;
+}
+.tabs::-webkit-scrollbar { height: 4px; }
+.tabs::-webkit-scrollbar-thumb { background: var(--border); }
+.tab {
+  display: flex; align-items: center; gap: 6px; flex: 0 0 auto;
+  max-width: 240px; min-width: 80px; padding: 6px 10px;
+  background: var(--panel-2); color: var(--muted);
+  border-right: 1px solid var(--border);
+  font-size: 12px; cursor: pointer; user-select: none;
+  white-space: nowrap; transition: background .12s, color .12s;
+}
+.tab:hover { background: var(--panel); color: var(--text); }
+.tab.tab-active { background: var(--panel); color: var(--text); border-bottom: 2px solid var(--accent); margin-bottom: -1px; }
+.tab .tab-ico { flex: 0 0 auto; font-size: 13px; line-height: 1; }
+.tab .tab-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tab .tab-close {
+  flex: 0 0 auto; width: 16px; height: 16px; border-radius: 4px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: none; color: var(--muted); cursor: pointer;
+  font-size: 12px; line-height: 1; padding: 0;
+}
+.tab .tab-close:hover { background: var(--red); color: #fff; }
+/* Botón "nueva sesión tmux" en la barra de pestañas */
+.tab.tab-new { min-width: 0; padding: 6px 12px; color: var(--muted); font-weight: 700; }
+.tab.tab-new:hover { background: var(--panel); color: var(--accent); }
+.tab.tab-new .tab-ico { font-size: 15px; }
+
+/* ---------- visor de archivos (pestaña de lectura) ---------- */
+.viewer {
+  display: flex; flex-direction: column; min-width: 0; min-height: 0;
+  background: var(--bg); color: var(--text);
+}
+/* Clave: el atributo [hidden] tiene la misma especificidad que .viewer; sin esto
+   la clase gana y el visor se queda SIEMPRE visible partiendo la pantalla. */
+.viewer[hidden] { display: none !important; }
+.viewer-head {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 10px;
+  padding: 6px 10px; background: var(--panel-2); border-bottom: 1px solid var(--border);
+  font-size: 12px; min-width: 0;
+}
+.viewer-ico { flex: 0 0 auto; font-size: 14px; }
+.viewer-name { font-weight: 700; color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.viewer-meta { flex: 0 0 auto; color: var(--muted); font-size: 11px; white-space: nowrap; }
+.viewer-tools { flex: 0 0 auto; margin-left: auto; display: flex; gap: 4px; }
+.vbtn {
+  background: var(--panel); border: 1px solid var(--border); color: var(--text);
+  width: 26px; height: 24px; border-radius: 5px; cursor: pointer; font-size: 13px; line-height: 1;
+  font-family: inherit;
+}
+.vbtn:hover { border-color: var(--accent); color: var(--accent); }
+.vbtn.vbtn-close:hover { border-color: var(--red); color: var(--red); }
+.vbtn.active { background: var(--accent); color: #08131a; border-color: var(--accent); }
+
+.viewer-pre {
+  flex: 1 1 auto; min-height: 0; min-width: 0; margin: 0; padding: 0;
+  overflow: auto; background: var(--bg);
+  font-family: 'JetBrains Mono', monospace; font-size: 12.5px; line-height: 1.55;
+  display: flex; align-items: flex-start;
+}
+.viewer-gutter {
+  flex: 0 0 auto; padding: 8px 10px 8px 12px; text-align: right;
+  color: var(--muted); user-select: none; background: var(--bg);
+  border-right: 1px solid var(--border);
+  white-space: pre;
+}
+.viewer-code {
+  flex: 1 1 auto; min-width: 0; padding: 8px 14px;
+  white-space: pre; color: var(--text);
+  tab-size: 4;
+}
+.viewer-pre.wrap .viewer-code { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+/* Con ajuste de línea activo no debe haber scroll horizontal en el visor. */
+.viewer-pre.wrap { overflow-x: hidden; }
+
+/* Editor en línea: textarea que sustituye al <pre> al pulsar ✏️. */
+.viewer-edit-area {
+  flex: 1 1 auto; min-height: 0; min-width: 0; width: 100%; box-sizing: border-box;
+  margin: 0; padding: 8px 14px; border: none; outline: none; resize: none;
+  background: var(--bg); color: var(--text);
+  font-family: 'JetBrains Mono', monospace; font-size: 12.5px; line-height: 1.55;
+  tab-size: 4; white-space: pre-wrap; overflow-wrap: anywhere; overflow: auto;
+}
+.vbtn.vbtn-save { color: var(--accent); border-color: var(--accent); }
+.vbtn.vbtn-save:hover { background: var(--accent); color: #08131a; }
+.vbtn.active { background: var(--accent); color: #08131a; border-color: var(--accent); }
+/* Igual que .viewer: la clase fija display y pisa el atributo [hidden]; hay que
+   forzar el ocultado de los paneles internos del visor. */
+.viewer-pre[hidden], .viewer-edit-area[hidden] { display: none !important; }
+.viewer-pre.wrap .viewer-gutter { white-space: pre; } /* gutter siempre en pre para alinear */
+.viewer-pre::-webkit-scrollbar { width: 10px; height: 10px; }
+.viewer-pre::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+.viewer-pre::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+.viewer-code a { color: var(--accent); }
+
+/* Móvil: pestañas más compactas, viewer con menos chrome */
+@media (max-width: 640px) {
+  .tab { max-width: 160px; min-width: 60px; padding: 5px 8px; }
+  .viewer-head { padding: 4px 8px; }
+  .vbtn { width: 28px; height: 26px; }
+  .viewer-code { padding: 6px 10px; font-size: 12px; }
 }

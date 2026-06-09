@@ -576,9 +576,9 @@
 
     if (isMobile()) document.body.classList.add("is-mobile");
     setupKeybar();
-    setupTmuxMenu();
     setupFiles();
     setupVoice();
+    _updateTabsUI();   // pinta la barra (sesión actual; se completa al conectar)
 
     // OSC 52: cuando tmux (o cualquier app) "copia", emite esta secuencia con el
     // texto en base64. La capturamos y la metemos en el portapapeles del navegador,
@@ -625,48 +625,45 @@
     });
   }
 
-  // ---------- GESTOR DE SESIONES TMUX (varias por usuario, solo las tuyas) ----------
+  // ---------- SESIONES TMUX COMO PESTAÑAS (varias por usuario, solo las tuyas) ----------
   // El backend lista/mata SOLO las sesiones cuyo nombre empieza por tu prefijo de
-  // email, así que nunca ves ni tocas las de otra persona. Cambiar de sesión =
-  // reconectar el WS pidiendo esa sesión (tmux new-session -A la crea si no existe).
-  function tmuxPanelOpen() { return $("tmux-panel").style.display !== "none"; }
-  function toggleTmuxPanel(show) {
-    const p = $("tmux-panel"); if (!p) return;
-    const open = (show === undefined) ? !tmuxPanelOpen() : show;
-    p.style.display = open ? "block" : "none";
-    if (open && ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "tmux-list" }));
+  // email, así que nunca ves ni tocas las de otra persona. Cada sesión es una
+  // PESTAÑA en la barra; cambiar de sesión = reconectar el WS pidiendo esa sesión
+  // (tmux new-session -A la crea si no existe). _sessions guarda la lista real.
+  let _sessions = [];   // [{label, current}]
+
+  // Mismo saneado que el backend (_slug) para que cliente y servidor coincidan.
+  function _slugLabel(s) {
+    return (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
   }
+  // Marca optimista de la sesión actual (antes de que llegue la lista del backend).
+  function _markCurrent(label) {
+    const norm = label || "principal";
+    let found = false;
+    _sessions.forEach((s) => { s.current = (s.label === norm); if (s.current) found = true; });
+    if (!found) _sessions.push({ label: norm, current: true });
+  }
+  // Recibe la lista del backend y repinta las pestañas.
   function renderSessions(list) {
-    const box = $("tmux-list"); if (!box) return;
-    box.innerHTML = "";
-    if (!list.length) { box.innerHTML = '<div class="tmux-empty">Cargando…</div>'; return; }
-    list.forEach((s) => {
-      const row = document.createElement("div");
-      row.className = "tmux-row" + (s.current ? " cur" : "");
-      const name = document.createElement("span");
-      name.className = "name";
-      name.textContent = s.label + (s.current ? "  " : "");
-      if (s.current) { const t = document.createElement("span"); t.className = "tag"; t.textContent = "(actual)"; name.appendChild(t); }
-      name.addEventListener("click", () => { if (!s.current) switchSession(s.label); else toggleTmuxPanel(false); });
-      const kill = document.createElement("button");
-      kill.className = "kill"; kill.textContent = "✕";
-      kill.title = s.current ? "No puedes cerrar la sesión en la que estás" : "Cerrar esta sesión";
-      kill.disabled = !!s.current;
-      kill.addEventListener("click", (e) => { e.stopPropagation(); killSession(s.label); });
-      row.appendChild(name); row.appendChild(kill);
-      box.appendChild(row);
-    });
+    _sessions = Array.isArray(list) ? list : [];
+    _updateTabsUI();
+  }
+  function requestSessions() {
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "tmux-list" }));
   }
   function switchSession(label) {
     currentSession = (label === "principal") ? null : label;
-    toggleTmuxPanel(false);
+    _markCurrent(label);
+    _activeTab = _TAB_TERM;
+    _ensureTerminalVisible();
     if (term) try { term.reset(); } catch (_) {}
-    reconnectNow();
+    reconnectNow();          // al reconectar (fsid) se vuelve a pedir la lista real
+    _updateTabsUI();
   }
   function newSession() {
     const raw = window.prompt("Nombre de la nueva sesión (p.ej. logs, pruebas):", "");
     if (raw === null) return;
-    const label = raw.trim();
+    const label = _slugLabel(raw.trim());
     if (!label) return;
     switchSession(label);
   }
@@ -680,16 +677,311 @@
     if (ws) { try { ws.onclose = null; ws.onerror = null; ws.close(); } catch (_) {} ws = null; }
     connectWS();
   }
-  function setupTmuxMenu() {
-    const btn = $("tmux-menu");
-    if (btn) btn.addEventListener("click", (e) => { e.stopPropagation(); toggleTmuxPanel(); });
-    const nb = $("tmux-new");
-    if (nb) nb.addEventListener("click", newSession);
-    // Cerrar el panel al hacer clic fuera de él.
-    document.addEventListener("click", (e) => {
-      if (!tmuxPanelOpen()) return;
-      if (e.target.closest("#tmux-panel") || e.target.closest("#tmux-menu")) return;
-      toggleTmuxPanel(false);
+
+  // ---------- VISOR DE ARCHIVOS EN PESTAÑAS ----------
+  // Cada vez que el usuario hace doble clic en un archivo de texto del explorador
+  // lateral, abrimos una pestaña con su contenido. La pestaña "Terminal" es la
+  // raíz y no se cierra; al cerrar la última pestaña de archivo volvemos a ella.
+  const _TAB_TERM = "terminal";
+  let _activeTab = _TAB_TERM;          // id de la pestaña activa (_TAB_TERM o tab.id)
+  let _tabSeq = 0;                      // contador para ids únicos
+  const _viewerTabs = new Map();        // id -> { id, name, path, content, dirty }
+  let _editing = false;                 // ¿el visor está en modo edición?
+  let _editTabId = null;                // id de la pestaña que se está editando
+
+  // Subconjunto "humano" de extensiones que tratamos como texto. Coincide con
+  // el allowlist del backend (que es más exhaustivo y autoritativo): esto es
+  // solo para el cursor y el mensaje de error del cliente.
+  const _TEXT_EXTS_HINT = new Set([
+    "md", "markdown", "txt", "text", "rst", "adoc", "org",
+    "html", "htm", "xml", "svg", "rss", "atom", "xsl", "xslt",
+    "json", "json5", "jsonc", "ndjson", "jsonl",
+    "yaml", "yml", "toml", "ini", "cfg", "conf", "env",
+    "log", "csv", "tsv", "diff", "patch",
+    "sh", "bash", "zsh", "fish", "ps1", "bat",
+    "py", "rb", "rs", "go", "java", "kt", "kts", "scala",
+    "c", "h", "cpp", "cc", "hpp", "m", "mm",
+    "cs", "php", "pl", "lua", "vim", "sql", "graphql",
+    "clj", "ex", "exs", "erl", "hs", "elm", "dart", "r", "swift",
+    "js", "mjs", "cjs", "jsx", "ts", "tsx", "vue", "svelte", "astro",
+    "css", "scss", "sass", "less",
+  ]);
+
+  function _isProbablyTextName(name) {
+    const base = (name || "").toLowerCase();
+    if (!base) return false;
+    if (_TEXT_EXTS_HINT.has(base)) return true; // Dockerfile, Makefile, etc.
+    const i = base.lastIndexOf(".");
+    if (i < 0) return true; // sin extensión y pequeño -> se intentará
+    return _TEXT_EXTS_HINT.has(base.slice(i + 1));
+  }
+
+  function _escapeHtml(s) {
+    return s.replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    }[c]));
+  }
+
+  function _renderViewer(tab) {
+    const code = $("viewer-code"); if (!code) return;
+    const gut = $("viewer-gutter");
+    // Texto crudo, escapado, con \n conservado (white-space: pre).
+    code.textContent = tab.content;
+    // Numerar líneas: una <span> por línea para que el wrap no rompa la alineación.
+    const n = tab.content.length ? tab.content.split("\n").length : 1;
+    const lines = new Array(n);
+    for (let i = 0; i < n; i++) lines[i] = (i + 1);
+    gut.textContent = lines.join("\n");
+    $("viewer-name").textContent = tab.name;
+    $("viewer-meta").textContent = humanSize(tab.content.length) + " · " + tab.path;
+  }
+
+  function humanSize(n) {
+    if (n < 1024) return n + " B";
+    if (n < 1024 * 1024) return (n / 1024).toFixed(n < 10240 ? 1 : 0) + " KB";
+    return (n / (1024 * 1024)).toFixed(1) + " MB";
+  }
+
+  function _ensureTerminalVisible() {
+    const tc = $("terminal-container");
+    const v = $("viewer");
+    if (tc) tc.style.display = "";
+    if (v) v.hidden = true;
+  }
+
+  function _ensureViewerVisible() {
+    const tc = $("terminal-container");
+    const v = $("viewer");
+    if (tc) tc.style.display = "none";
+    if (v) v.hidden = false;
+  }
+
+  function _updateTabsUI() {
+    const bar = $("tabs"); if (!bar) return;
+    // Limpia y vuelve a pintar (pocas pestañas, es barato y robusto).
+    bar.innerHTML = "";
+    const onTerm = _activeTab === _TAB_TERM;
+
+    // --- una pestaña por SESIÓN tmux (fallback: la actual mientras llega la lista) ---
+    const sessions = _sessions.length ? _sessions
+      : [{ label: currentSession || "principal", current: true }];
+    sessions.forEach((s) => {
+      const el = document.createElement("div");
+      el.className = "tab" + (onTerm && s.current ? " tab-active" : "");
+      el.dataset.tab = "term:" + s.label;
+      el.title = "Sesión tmux: " + s.label + (s.current ? " (actual)" : "");
+      el.innerHTML = '<span class="tab-ico">🖥</span><span class="tab-name"></span>';
+      el.querySelector(".tab-name").textContent = s.label;
+      if (!s.current) {   // solo se puede cerrar una sesión que no sea la actual
+        const x = document.createElement("button");
+        x.className = "tab-close"; x.textContent = "✕"; x.title = "Cerrar esta sesión";
+        x.addEventListener("click", (e) => { e.stopPropagation(); killSession(s.label); });
+        el.appendChild(x);
+      }
+      el.addEventListener("click", (e) => {
+        if (e.target.closest(".tab-close")) return;
+        if (s.current) switchTab(_TAB_TERM); else switchSession(s.label);
+      });
+      bar.appendChild(el);
+    });
+
+    // --- botón "＋" para crear una sesión tmux nueva (en pestaña) ---
+    const plus = document.createElement("div");
+    plus.className = "tab tab-new"; plus.title = "Nueva sesión tmux";
+    plus.innerHTML = '<span class="tab-ico">＋</span>';
+    plus.addEventListener("click", newSession);
+    bar.appendChild(plus);
+
+    // --- pestañas de VISORES de archivos ---
+    _viewerTabs.forEach((t) => {
+      const el = document.createElement("div");
+      el.className = "tab" + (_activeTab === t.id ? " tab-active" : "");
+      el.dataset.tab = t.id;
+      el.title = t.path;
+      el.innerHTML =
+        '<span class="tab-ico">📄</span>' +
+        '<span class="tab-name"></span>' +
+        '<button class="tab-close" title="Cerrar pestaña">✕</button>';
+      el.querySelector(".tab-name").textContent = t.name;
+      el.addEventListener("click", (e) => {
+        if (e.target.closest(".tab-close")) return;
+        switchTab(t.id);
+      });
+      el.querySelector(".tab-close").addEventListener("click", (e) => {
+        e.stopPropagation();
+        closeViewerTab(t.id);
+      });
+      bar.appendChild(el);
+    });
+  }
+
+  function switchTab(id) {
+    if (id !== _TAB_TERM && !_viewerTabs.has(id)) return;
+    if (!_tryExitEdit()) return;   // cambios sin guardar → confirmar antes de salir
+    _activeTab = id;
+    if (id === _TAB_TERM) {
+      _ensureTerminalVisible();
+      // Reencajar la terminal: el panel creció a la izquierda/derecha al abrir
+      // el sidebar de archivos, pero al volver no cambia. Aún así forzamos un
+      // fit por si el contenedor cambió de tamaño al ocultarse el visor.
+      fsRefit();
+      try { term && term.focus(); } catch (_) {}
+    } else {
+      _ensureViewerVisible();
+      _renderViewer(_viewerTabs.get(id));
+    }
+    _updateTabsUI();
+  }
+
+  function closeViewerTab(id) {
+    if (_editing && _editTabId === id && !_tryExitEdit()) return;
+    const wasActive = _activeTab === id;
+    _viewerTabs.delete(id);
+    if (wasActive) {
+      // Si quedan otras pestañas de visor, activa la primera; si no, vuelve a Terminal.
+      const next = _viewerTabs.keys().next();
+      _activeTab = next.done ? _TAB_TERM : next.value;
+    }
+    if (_activeTab === _TAB_TERM) _ensureTerminalVisible(); else _renderViewer(_viewerTabs.get(_activeTab));
+    if (_viewerTabs.size === 0) _ensureTerminalVisible();
+    _updateTabsUI();
+    if (_activeTab === _TAB_TERM) { fsRefit(); try { term && term.focus(); } catch (_) {} }
+  }
+
+  // API pública: abre un archivo de texto en una pestaña nueva (o activa la
+  // existente si ya está abierto ese mismo path).
+  async function viewerOpenPath(path, name, sizeHint) {
+    if (!_tryExitEdit()) return;   // no abrir otro archivo con cambios sin guardar
+    if (!fsid) { fsStatus("Abre la terminal primero (el visor usa tu sesión SSH).", "err"); return; }
+    if (!_isProbablyTextName(name)) {
+      // Dejamos que el backend sea quien diga la última palabra, pero avisamos
+      // al usuario de que igual no es texto.
+      fsStatus("Comprobando si '" + name + "' es texto…");
+    } else {
+      fsStatus("Abriendo '" + name + "'…");
+    }
+    // ¿Ya hay una pestaña abierta con este path? Reutilízala.
+    for (const t of _viewerTabs.values()) if (t.path === path) { switchTab(t.id); fsStatus("'" + name + "' ya estaba abierto ✓", "ok"); return; }
+    try {
+      const res = await fetch("/files/read?fsid=" + encodeURIComponent(fsid) + "&path=" + encodeURIComponent(path), { headers: fsHeaders() });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { fsStatus(d.detail || ("Error " + res.status), "err"); return; }
+      const id = "v" + (++_tabSeq);
+      _viewerTabs.set(id, { id, name: d.name || name, path, content: d.content || "" });
+      _activeTab = id;
+      _ensureViewerVisible();
+      _renderViewer(_viewerTabs.get(id));
+      _updateTabsUI();
+      fsStatus("Abierto '" + d.name + "' ✓", "ok");
+    } catch (_) { fsStatus("Error de red al abrir '" + name + "'", "err"); }
+  }
+
+  function _viewerCopyAll() {
+    const t = _viewerTabs.get(_activeTab);
+    if (!t) return;
+    const text = t.content;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(
+        () => { const b = $("viewer-copy"); if (b) { const old = b.textContent; b.textContent = "✓"; setTimeout(() => { b.textContent = old; }, 900); } },
+        () => fsStatus("No se pudo copiar al portapapeles", "err")
+      );
+    } else {
+      // Fallback: textarea + execCommand
+      const ta = document.createElement("textarea");
+      ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand("copy"); fsStatus("Copiado ✓", "ok"); }
+      catch (_) { fsStatus("No se pudo copiar", "err"); }
+      ta.remove();
+    }
+  }
+
+  function _viewerToggleWrap() {
+    const pre = $("viewer-pre");
+    const btn = $("viewer-wrap");
+    if (!pre) return;
+    const on = pre.classList.toggle("wrap");
+    if (btn) btn.classList.toggle("active", on);
+  }
+
+  // ---- EDICIÓN EN LÍNEA del archivo del visor ----
+  function _enterEdit() {
+    const tab = _viewerTabs.get(_activeTab);
+    if (!tab) return;
+    _editing = true; _editTabId = tab.id;
+    const ta = $("viewer-edit-area");
+    if (ta) { ta.value = tab.content; ta.hidden = false; }
+    const pre = $("viewer-pre"); if (pre) pre.hidden = true;
+    const sv = $("viewer-save"); if (sv) sv.hidden = false;
+    const eb = $("viewer-edit"); if (eb) { eb.classList.add("active"); eb.title = "Cancelar edición"; }
+    if (ta) ta.focus();
+  }
+  function _exitEdit() {
+    _editing = false; _editTabId = null;
+    const ta = $("viewer-edit-area"); if (ta) ta.hidden = true;
+    const pre = $("viewer-pre"); if (pre) pre.hidden = false;
+    const sv = $("viewer-save"); if (sv) sv.hidden = true;
+    const eb = $("viewer-edit"); if (eb) { eb.classList.remove("active"); eb.title = "Editar este archivo"; }
+  }
+  // Sale del modo edición; si hay cambios sin guardar, pide confirmación.
+  // Devuelve true si se pudo salir (o no se estaba editando).
+  function _tryExitEdit() {
+    if (!_editing) return true;
+    const ta = $("viewer-edit-area");
+    const tab = _viewerTabs.get(_editTabId);
+    const dirty = tab && ta && ta.value !== tab.content;
+    if (dirty && !window.confirm("Tienes cambios sin guardar. ¿Descartarlos?")) return false;
+    _exitEdit();
+    return true;
+  }
+  async function _saveEdit() {
+    const tab = _viewerTabs.get(_editTabId || _activeTab);
+    const ta = $("viewer-edit-area");
+    if (!tab || !ta) return;
+    if (!fsid) { showToast("Sin sesión SSH para guardar", true); return; }
+    const content = ta.value;
+    const fd = new FormData();
+    fd.append("fsid", fsid); fd.append("path", tab.path); fd.append("content", content);
+    const sv = $("viewer-save"); if (sv) sv.disabled = true;
+    try {
+      const res = await fetch("/files/write", { method: "POST", headers: fsHeaders(), body: fd });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { showToast(d.detail || ("No se pudo guardar (" + res.status + ")"), true); return; }
+      tab.content = content;
+      showToast("Guardado ✓ " + tab.name);
+      _exitEdit();
+      _renderViewer(tab);
+    } catch (_) { showToast("Error de red al guardar", true); }
+    finally { if (sv) sv.disabled = false; }
+  }
+
+  function _setupViewer() {
+    const close = $("viewer-close");
+    if (close) close.addEventListener("click", () => closeViewerTab(_activeTab));
+    const copy = $("viewer-copy");
+    if (copy) copy.addEventListener("click", _viewerCopyAll);
+    const wrap = $("viewer-wrap");
+    if (wrap) wrap.addEventListener("click", _viewerToggleWrap);
+    // Ajuste de línea ACTIVADO por defecto: el texto se adapta al ancho de la
+    // ventana, sin scroll horizontal. El botón ↩ permite desactivarlo.
+    const pre = $("viewer-pre");
+    if (pre) pre.classList.add("wrap");
+    if (wrap) wrap.classList.add("active");
+    // ✏️ editar / cancelar, 💾 guardar.
+    const eb = $("viewer-edit");
+    if (eb) eb.addEventListener("click", () => { if (_editing) _tryExitEdit(); else _enterEdit(); });
+    const sv = $("viewer-save");
+    if (sv) sv.addEventListener("click", _saveEdit);
+    // Atajos: Ctrl/Cmd+S guarda (en edición); Ctrl/Cmd+W cierra la pestaña activa.
+    document.addEventListener("keydown", (e) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && (e.key === "s" || e.key === "S")) {
+        if (_editing) { e.preventDefault(); _saveEdit(); }
+        return;
+      }
+      if (mod && (e.key === "w" || e.key === "W")) {
+        if (_activeTab !== _TAB_TERM) { e.preventDefault(); closeViewerTab(_activeTab); }
+      }
     });
   }
 
@@ -763,6 +1055,8 @@
       ops.appendChild(fsOp("✎", "Renombrar / mover", () => fsRename(full, it.name)));
       ops.appendChild(fsOp("🗑", "Borrar", () => fsDelete(full, it.name, it.dir), "del"));
       row.appendChild(ico); row.appendChild(info); row.appendChild(ops);
+      // Doble clic sobre un archivo de texto → abrirlo en una pestaña del visor.
+      if (!it.dir) row.addEventListener("dblclick", () => viewerOpenPath(full, it.name, it.size));
       list.appendChild(row);
     });
   }
@@ -842,6 +1136,7 @@
       fsList(parent);
     });
     const rf = $("files-refresh"); if (rf) rf.addEventListener("click", () => fsList(fsPath));
+    _setupViewer();
     const mk = $("files-mkdir"); if (mk) mk.addEventListener("click", fsMkdir);
     const ub = $("files-upload-btn"); if (ub) ub.addEventListener("click", () => $("files-input").click());
     const inp = $("files-input"); if (inp) inp.addEventListener("change", (e) => { fsUploadFiles(e.target.files); e.target.value = ""; });
@@ -888,7 +1183,7 @@
           try {
             const m = JSON.parse(ev.data);
             if (m && m.type === "tmux-sessions") { renderSessions(m.sessions || []); return; }
-            if (m && m.type === "fsid") { fsid = m.fsid; return; }
+            if (m && m.type === "fsid") { fsid = m.fsid; requestSessions(); return; }
           } catch (_) {}
         }
         term.write(ev.data);
@@ -899,7 +1194,28 @@
         setTimeout(() => { if (ws && ws.readyState === WebSocket.OPEN) ws.send("claude\r"); }, 700);
       }
     };
-    ws.onclose = () => { setStatus("disconnected", "desconectado"); scheduleReconnect(); };
+    ws.onclose = (ev) => {
+      setStatus("disconnected", "desconectado");
+      const code = ev ? ev.code : 0;
+      // Cierres por credenciales/seguridad: NO reconectar (reintentar reenviaría
+      // la misma contraseña y dispararía el bloqueo). Volver al formulario.
+      if (code === 4401 || code === 4403 || code === 4429 || code === 4400) {
+        sshPassword = null;
+        ws = null;
+        if (code === 4401) {              // sesión web caducada -> login
+          jwt = null;
+          $("login-error").textContent = "Sesión caducada. Vuelve a entrar.";
+          show("login-screen");
+        } else {                          // credenciales SSH / bloqueo -> formulario SSH
+          $("ssh-error").textContent = (ev && ev.reason) || "No se pudo abrir la terminal.";
+          $("ssh-password").value = "";
+          show("ssh-screen");
+          $("ssh-password").focus();
+        }
+        return;
+      }
+      scheduleReconnect();
+    };
     ws.onerror = () => { try { ws.close(); } catch (_) {} };
   }
 

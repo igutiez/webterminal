@@ -25,8 +25,10 @@ import shutil
 import stat as stat_mod
 import subprocess
 import tempfile
+import time
 from urllib.parse import quote
 
+import paramiko
 from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile, WebSocket
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -40,10 +42,18 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 log = logging.getLogger("webterminal")
 
 FRONTEND_DIR = os.environ.get("WEBTERMINAL_FRONTEND", "/opt/webterminal/frontend")
-PUBLIC_URL = os.environ.get("WEBTERMINAL_URL", "https://terminal.vistawib.com")
+PUBLIC_URL = os.environ.get("WEBTERMINAL_URL", "https://terminal.messor.app")
 MAX_CONNECTIONS = int(os.environ.get("WEBTERMINAL_MAX_CONNECTIONS", "5"))
 RESET_TTL_MIN = 30
 MIN_PW_LEN = 8
+
+# Anti fuerza bruta de la contraseña del SISTEMA: tras MAX_SSH_FAILS contraseñas
+# erróneas seguidas, esa identidad web queda bloqueada LOCK_SECONDS antes de
+# poder volver a intentar abrir la terminal.
+MAX_SSH_FAILS = int(os.environ.get("WEBTERMINAL_MAX_SSH_FAILS", "5"))
+LOCK_SECONDS = int(os.environ.get("WEBTERMINAL_LOCK_SECONDS", "300"))
+_ssh_fails: dict = {}            # web_email -> {"count": int, "until": float}
+_fails_lock = asyncio.Lock()
 
 # Subida de archivos (cualquier tipo) para que Claude (en la sesión SSH) pueda
 # abrirlos. El archivo se guarda aquí y la RUTA se inyecta en la terminal.
@@ -82,7 +92,7 @@ async def security_headers(request, call_next):
         "default-src 'self'; script-src 'self' https://unpkg.com; "
         "style-src 'self' 'unsafe-inline' https://unpkg.com https://fonts.googleapis.com; "
         "font-src https://fonts.gstatic.com; img-src 'self' data:; "
-        "connect-src 'self' wss://terminal.vistawib.com"
+        "connect-src 'self' wss://terminal.messor.app"
     )
     return resp
 
@@ -212,6 +222,36 @@ async def upload_file(
     return {"path": path, "name": os.path.basename(path)}
 
 
+async def _locked_for(key: str) -> int:
+    """Segundos de bloqueo que le quedan a esa identidad (0 si no está bloqueada)."""
+    async with _fails_lock:
+        rec = _ssh_fails.get(key)
+        if not rec:
+            return 0
+        remaining = int(rec.get("until", 0) - time.time())
+        return remaining if remaining > 0 else 0
+
+
+async def _record_ssh_fail(key: str) -> int:
+    """Suma un fallo de contraseña; al llegar al límite bloquea. Devuelve los
+    segundos de bloqueo si se acaba de activar, o 0 si aún no."""
+    async with _fails_lock:
+        rec = _ssh_fails.get(key) or {"count": 0, "until": 0.0}
+        rec["count"] += 1
+        if rec["count"] >= MAX_SSH_FAILS:
+            rec["until"] = time.time() + LOCK_SECONDS
+            rec["count"] = 0
+            _ssh_fails[key] = rec
+            return LOCK_SECONDS
+        _ssh_fails[key] = rec
+        return 0
+
+
+async def _clear_ssh_fails(key: str) -> None:
+    async with _fails_lock:
+        _ssh_fails.pop(key, None)
+
+
 @app.websocket("/ws")
 async def ws_endpoint(websocket: WebSocket):
     global _active
@@ -236,8 +276,7 @@ async def ws_endpoint(websocket: WebSocket):
         try:
             data = json.loads(first)
             ssh_user = (data.get("ssh_user") or "").strip()
-            # Contraseña OPCIONAL: si va vacía, el backend entra por clave SSH
-            # (la barrera real es el cert mTLS + el login web).
+            # El acceso es SIEMPRE con la contraseña del sistema del usuario.
             ssh_password = data.get("password") or ""
             session_label = data.get("session")  # opcional: qué sesión tmux abrir
         except (ValueError, KeyError, TypeError):
@@ -248,19 +287,48 @@ async def ws_endpoint(websocket: WebSocket):
             await websocket.send_text("\r\n[webterminal] falta el usuario SSH\r\n")
             await websocket.close(code=4400)
             return
+        if not ssh_password:
+            await websocket.send_text("\r\n[webterminal] falta la contrasena del sistema\r\n")
+            await websocket.close(code=4400, reason="Falta la contraseña")
+            return
+
+        # Anti fuerza bruta: si esta identidad está bloqueada por fallos previos, fuera.
+        wait = await _locked_for(web_email)
+        if wait:
+            await websocket.send_text(
+                f"\r\n[webterminal] demasiados intentos fallidos. Reintenta en {wait} s.\r\n")
+            await websocket.close(code=4429, reason=f"Bloqueado {wait}s por intentos fallidos")
+            return
 
         term = SSHTerminal(ssh_user, ssh_password, websocket,
                            web_email=web_email, session_label=session_label)
         try:
             await term.connect()
+        except paramiko.AuthenticationException:
+            locked = await _record_ssh_fail(web_email)
+            log.info("ssh auth failed web=%s ssh_user=%s (locked=%ds)", web_email, ssh_user, locked)
+            try:
+                if locked:
+                    await websocket.send_text(
+                        f"\r\n[webterminal] contrasena incorrecta. Bloqueado {locked} s por seguridad.\r\n")
+                    await websocket.close(code=4429, reason=f"Bloqueado {locked}s por intentos fallidos")
+                else:
+                    await websocket.send_text("\r\n[webterminal] usuario o contrasena del sistema incorrectos.\r\n")
+                    await websocket.close(code=4403, reason="Usuario o contraseña incorrectos")
+            except Exception:
+                pass
+            return
         except Exception as exc:  # noqa: BLE001
             log.info("ssh connect failed web=%s ssh_user=%s: %s", web_email, ssh_user, exc)
             try:
                 await websocket.send_text(f"\r\n[webterminal] fallo de conexion SSH: {exc}\r\n")
-                await websocket.close(code=4500)
+                await websocket.close(code=4500, reason="Fallo de conexión SSH")
             except Exception:
                 pass
             return
+
+        # Conexión correcta: limpiar el contador de fallos de esa identidad.
+        await _clear_ssh_fails(web_email)
 
         # Registrar la sesión para el explorador de archivos y avisar al cliente.
         fsid = secrets.token_urlsafe(16)
@@ -383,7 +451,8 @@ def _fs_list(term, path):
     try:
         path = sftp.normalize(path or ".")  # "." => home del usuario SSH
         entries = sftp.listdir_attr(path)
-        items = [_entry(e) for e in entries if not e.filename.startswith(".") or True]
+        # Mostramos también los ocultos (dotfiles): en una terminal importan.
+        items = [_entry(e) for e in entries]
         # Para los enlaces, intentar saber si apuntan a carpeta
         for it, e in zip(items, entries):
             if it["link"]:
@@ -451,6 +520,161 @@ async def files_download(fsid: str, path: str, token: str = ""):
     disp = f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(name)}"
     return StreamingResponse(gen(), media_type="application/octet-stream",
                              headers={"Content-Disposition": disp, "Content-Length": str(st.st_size)})
+
+
+# Extensiones de texto permitidas para el visor en pestañas. Cobertura amplia
+# de archivos de configuración, código, marcado y datos. Sin extensión: solo
+# si el archivo es pequeño y "se parece" a texto (sin bytes nulos).
+_TEXT_EXTS = frozenset({
+    # marcado / docs
+    "md", "markdown", "txt", "text", "rst", "adoc", "asciidoc", "rdoc", "org",
+    "html", "htm", "xhtml", "xml", "xsl", "xslt", "svg", "rss", "atom",
+    # datos / config
+    "json", "json5", "jsonc", "ndjson", "jsonl", "yaml", "yml", "toml", "ini",
+    "cfg", "conf", "config", "properties", "env", "csv", "tsv", "tab",
+    "log", "diff", "patch",
+    # ignores / dotfiles típicos
+    "gitignore", "gitattributes", "editorconfig", "dockerignore", "eslintignore",
+    "prettierignore", "npmrc", "nvmrc", "htaccess",
+    # shell / scripts
+    "sh", "bash", "zsh", "fish", "ksh", "csh", "ps1", "psm1", "bat", "cmd",
+    # lenguajes
+    "py", "pyi", "ipynb", "rb", "rs", "go", "java", "kt", "kts", "scala", "sbt",
+    "c", "h", "cpp", "cc", "cxx", "c++", "hpp", "hh", "hxx", "m", "mm",
+    "cs", "fs", "fsx", "vb",
+    "php", "pl", "pm", "t", "lua", "vim", "vimrc",
+    "sql", "graphql", "gql", "proto",
+    "clj", "cljs", "cljc", "edn", "ex", "exs", "erl", "hrl", "hs", "lhs",
+    "elm", "dart", "r", "swift", "gradle", "groovy",
+    # web
+    "js", "mjs", "cjs", "jsx", "ts", "tsx", "vue", "svelte", "astro",
+    "css", "scss", "sass", "less", "styl", "pcss",
+    # build / misc
+    "mk", "cmake", "ninja", "asm", "s", "S",
+    "tex", "bib",
+    # archivos comunes sin extensión (lower-case para comparar)
+    "dockerfile", "makefile", "rakefile", "gemfile", "procfile", "vagrantfile",
+    "license", "copying", "readme", "changelog", "authors", "contributors",
+    "todo",
+})
+MAX_TEXT_READ = 2 * 1024 * 1024  # 2 MB
+
+
+def _is_text_readable(name: str, size: int, data: bytes | None = None) -> bool:
+    """Decide si dejamos abrir un archivo en el visor de pestañas.
+
+    - Con extensión conocida de texto: sí.
+    - Sin extensión o desconocida: solo si es pequeño (< 64 KB) y no tiene
+      bytes nulos (señal típica de binario). Si tenemos el contenido (data),
+      muestreamos los primeros 8 KB.
+    """
+    base = posixpath.basename(name or "")
+    if "." in base:
+        ext = base.rsplit(".", 1)[1].lower()
+        if ext in _TEXT_EXTS:
+            return True
+        # Sin extensión, el "name" es solo la primera parte
+        stem = base.rsplit(".", 1)[0].lower()
+        if stem in _TEXT_EXTS and "." not in base.split(stem, 1)[1]:
+            return True
+        return False
+    # Sin punto en absoluto (Makefile, Dockerfile, LICENSE, etc.)
+    if base.lower() in _TEXT_EXTS:
+        return True
+    if size > 64 * 1024:
+        return False
+    if data is None:
+        return True  # filtraremos al leer
+    sample = data[:8192]
+    return b"\x00" not in sample
+
+
+def _fs_read_text(term, path):
+    sftp = term.open_sftp()
+    try:
+        try:
+            st = sftp.stat(path)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="No existe el archivo")
+        if stat_mod.S_ISDIR(st.st_mode):
+            raise HTTPException(status_code=400, detail="Es una carpeta, no un archivo")
+        size = int(st.st_size or 0)
+        if size > MAX_TEXT_READ:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Archivo demasiado grande para vista previa ({size} bytes; máximo {MAX_TEXT_READ}). Usa ⬇ para descargarlo.",
+            )
+        name = posixpath.basename(path) or "archivo"
+        with sftp.open(path, "rb") as fh:
+            data = fh.read()
+        if not _is_text_readable(name, size, data):
+            raise HTTPException(
+                status_code=415,
+                detail="Parece un archivo binario. El visor solo abre texto plano (.md, .txt, .html, código, etc.).",
+            )
+        text = data.decode("utf-8", errors="replace")
+        return {
+            "path": path,
+            "name": name,
+            "size": size,
+            "mtime": int(st.st_mtime or 0),
+            "content": text,
+        }
+    finally:
+        sftp.close()
+
+
+@app.get("/files/read")
+async def files_read(fsid: str, path: str, authorization: str | None = Header(default=None)):
+    web_email = _bearer(authorization)
+    term = _resolve_term(fsid, web_email)
+    try:
+        return await asyncio.to_thread(_fs_read_text, term, path)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"No se pudo leer: {exc}")
+
+
+def _fs_write_text(term, path, data: bytes):
+    sftp = term.open_sftp()
+    try:
+        # No permitir sobrescribir una carpeta; un archivo inexistente se crea.
+        try:
+            st = sftp.stat(path)
+            if stat_mod.S_ISDIR(st.st_mode):
+                raise HTTPException(status_code=400, detail="Es una carpeta, no un archivo")
+        except FileNotFoundError:
+            pass
+        with sftp.open(path, "wb") as fh:
+            fh.write(data)
+        return {"ok": True, "size": len(data)}
+    finally:
+        sftp.close()
+
+
+@app.post("/files/write")
+async def files_write(
+    fsid: str = Form(...),
+    path: str = Form(...),
+    content: str = Form(...),
+    authorization: str | None = Header(default=None),
+):
+    """Guarda el contenido (texto UTF-8) en el archivo, por SFTP sobre la sesión
+    SSH viva (mismos permisos que la terminal). Mismo tope que la lectura (2 MB)."""
+    web_email = _bearer(authorization)
+    term = _resolve_term(fsid, web_email)
+    data = content.encode("utf-8")
+    if len(data) > MAX_TEXT_READ:
+        raise HTTPException(status_code=413, detail=f"Archivo demasiado grande para guardar (máx {MAX_TEXT_READ} bytes)")
+    try:
+        res = await asyncio.to_thread(_fs_write_text, term, path, data)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"No se pudo guardar: {exc}")
+    log.info("sftp write web=%s -> %s (%d bytes)", web_email, path, len(data))
+    return res
 
 
 def _fs_put(term, fileobj, remote):

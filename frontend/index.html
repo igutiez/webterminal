@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <title>WibTerminal</title>
+  <title>MessorTerminal</title>
 
   <!-- PWA / móvil -->
   <link rel="manifest" href="/manifest.webmanifest" />
@@ -11,7 +11,7 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="WibTerminal" />
+  <meta name="apple-mobile-web-app-title" content="MessorTerminal" />
   <link rel="apple-touch-icon" href="/icon-192.png" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -25,13 +25,13 @@
   <script src="https://unpkg.com/xterm-addon-search@0.13.0/lib/xterm-addon-search.js"></script>
   <script src="https://unpkg.com/xterm-addon-canvas@0.5.0/lib/xterm-addon-canvas.js"></script>
 
-  <link rel="stylesheet" href="style.css?v=24" />
+  <link rel="stylesheet" href="style.css?v=28" />
 </head>
 <body>
   <!-- LOGIN -->
   <div id="login-screen" class="screen card-screen">
     <form id="login-form" class="card" autocomplete="on">
-      <h1>WibTerminal</h1>
+      <h1>MessorTerminal</h1>
       <p class="subtitle">Acceso seguro</p>
       <label for="login-email">Email</label>
       <input id="login-email" name="email" type="email" autocomplete="username" required autofocus />
@@ -119,13 +119,12 @@
         <span id="status-dot" class="dot dot-red"></span>
         <span id="status-text">desconectado</span>
       </div>
-      <div class="center">WibTerminal</div>
+      <div class="center">MessorTerminal</div>
       <div class="right">
         <button id="files-btn" title="Explorador de archivos (subir / descargar)">📁</button>
         <button id="screencap" title="Foto de pantalla para que Claude vea el error">📷</button>
         <button id="screenrec" title="Grabar vídeo (Claude verá los fotogramas del error)">🎥</button>
         <button id="cap-stop" title="Dejar de compartir pantalla" style="display:none">⏹</button>
-        <button id="tmux-menu" title="Sesiones tmux (crear / cambiar / cerrar)">🗂</button>
         <button id="mic" title="Dictar por voz (hablar en vez de teclear)">🎤</button>
         <button id="paste" title="Pegar texto del portapapeles">📋</button>
         <button id="img-upload" title="Subir archivo (o pega / arrastra cualquier archivo)">📎</button>
@@ -152,7 +151,30 @@
         <div id="files-status" class="files-status"></div>
         <div id="files-drop" class="files-drop">Suelta archivos aquí</div>
       </aside>
-      <div id="terminal-container"></div>
+      <div id="main-area">
+        <!-- Barra de pestañas: una por sesión tmux + ＋nueva + visores de archivos.
+             La rellena JS (_updateTabsUI) al conectar. -->
+        <div id="tabs" class="tabs"></div>
+        <div id="panes">
+          <div id="terminal-container"></div>
+          <div id="viewer" class="viewer" hidden>
+            <div class="viewer-head">
+              <span class="viewer-ico">📄</span>
+              <span id="viewer-name" class="viewer-name"></span>
+              <span id="viewer-meta" class="viewer-meta"></span>
+              <span class="viewer-tools">
+                <button id="viewer-edit" class="vbtn" title="Editar este archivo">✏️</button>
+                <button id="viewer-save" class="vbtn vbtn-save" title="Guardar cambios (Ctrl+S)" hidden>💾</button>
+                <button id="viewer-wrap" class="vbtn" title="Ajuste de línea (alternar)">↩</button>
+                <button id="viewer-copy" class="vbtn" title="Copiar todo al portapapeles">⧉</button>
+                <button id="viewer-close" class="vbtn vbtn-close" title="Cerrar pestaña">✕</button>
+              </span>
+            </div>
+            <pre id="viewer-pre" class="viewer-pre wrap"><div id="viewer-gutter" class="viewer-gutter"></div><code id="viewer-code" class="viewer-code"></code></pre>
+            <textarea id="viewer-edit-area" class="viewer-edit-area" spellcheck="false" hidden></textarea>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Barra de teclas especiales + ventanas tmux (sobre todo para móvil) -->
@@ -180,13 +202,6 @@
     <input id="img-file" type="file" multiple style="display:none" />
     <div id="toast" class="toast"></div>
 
-    <!-- Panel de sesiones tmux (crear / cambiar / cerrar — solo las tuyas) -->
-    <div id="tmux-panel" class="tmux-panel" style="display:none">
-      <div class="tmux-panel-h">Tus sesiones tmux</div>
-      <div id="tmux-list" class="tmux-list"></div>
-      <button id="tmux-new" class="tmux-new">＋ Nueva sesión</button>
-    </div>
-
     <input id="files-input" type="file" multiple style="display:none" />
 
     <!-- Overlay de dictado por voz (móvil): micro grande + transcripción en vivo -->
@@ -201,6 +216,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=25"></script>
+  <script src="app.js?v=30"></script>
 </body>
 </html>
