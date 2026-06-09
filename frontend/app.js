@@ -1,4 +1,4 @@
-/* WebTerminal frontend. Token + SSH password live ONLY in memory. */
+/* MessorTerminal frontend. Token + SSH password live ONLY in memory. */
 (function () {
   "use strict";
 
@@ -462,6 +462,12 @@
     term.loadAddon(searchAddon);
     term.open($("terminal-container"));
     // DOM renderer (default) — scroll y selección fiables. (CanvasAddon daba problemas de scroll.)
+    // Scroll con rueda: lo gestiona tmux. xterm.js convierte cada wheel en un SGR mouse
+    // event que tmux recibe; con `set -g mouse on` + `bind -n WheelUpPane` entra en copy-mode
+    // si no hay TUI activa, o reenvía al app (Claude, vim, htop) si la hay.
+    // NO interceptar aquí: stopPropagation() en captura impide que xterm genere el escape
+    // sequence, y `term.scrollLines()` opera sobre el buffer interno de xterm, no sobre
+    // el scrollback visible de tmux.
     fitAddon.fit();
     requestAnimationFrame(() => { try { fitAddon.fit(); } catch (_) {} });
     term.onData((d) => {
