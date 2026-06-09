@@ -25,7 +25,7 @@
   <script src="https://unpkg.com/xterm-addon-search@0.13.0/lib/xterm-addon-search.js"></script>
   <script src="https://unpkg.com/xterm-addon-canvas@0.5.0/lib/xterm-addon-canvas.js"></script>
 
-  <link rel="stylesheet" href="style.css?v=28" />
+  <link rel="stylesheet" href="style.css?v=29" />
 </head>
 <body>
   <!-- LOGIN -->
@@ -122,6 +122,7 @@
       <div class="center">MessorTerminal</div>
       <div class="right">
         <button id="files-btn" title="Explorador de archivos (subir / descargar)">📁</button>
+        <button id="ai-config-btn" title="Configurar modelos de IA por API (Kimi / DeepSeek)">⚙</button>
         <button id="screencap" title="Foto de pantalla para que Claude vea el error">📷</button>
         <button id="screenrec" title="Grabar vídeo (Claude verá los fotogramas del error)">🎥</button>
         <button id="cap-stop" title="Dejar de compartir pantalla" style="display:none">⏹</button>
@@ -163,6 +164,7 @@
               <span id="viewer-name" class="viewer-name"></span>
               <span id="viewer-meta" class="viewer-meta"></span>
               <span class="viewer-tools">
+                <button id="viewer-ai" class="vbtn" title="Pedir a un modelo que cambie la selección (o todo el archivo)">✨</button>
                 <button id="viewer-edit" class="vbtn" title="Editar este archivo">✏️</button>
                 <button id="viewer-save" class="vbtn vbtn-save" title="Guardar cambios (Ctrl+S)" hidden>💾</button>
                 <button id="viewer-wrap" class="vbtn" title="Ajuste de línea (alternar)">↩</button>
@@ -204,6 +206,63 @@
 
     <input id="files-input" type="file" multiple style="display:none" />
 
+    <!-- Diálogo: pedir a un modelo (selección + instrucción + destino) -->
+    <div id="ai-overlay" class="ai-overlay" hidden>
+      <div class="ai-box">
+        <div class="ai-box-h"><span>✨ Pedir a un modelo</span><button id="ai-cancel" class="ai-x" title="Cerrar">✕</button></div>
+        <div id="ai-ctx" class="ai-ctx"></div>
+        <textarea id="ai-instruction" class="ai-instruction" rows="3" placeholder="Ej.: corrige la ortografía y mejora el ritmo de este párrafo, sin cambiar el sentido…"></textarea>
+        <div class="ai-dest">
+          <label for="ai-target">Enviar a</label>
+          <select id="ai-target">
+            <option value="claude-tmux">Claude (sesión tmux activa)</option>
+            <option value="deepseek">DeepSeek (API)</option>
+            <option value="kimi">Kimi (API)</option>
+          </select>
+          <button id="ai-send" class="btn-primary">Enviar</button>
+        </div>
+        <div id="ai-status" class="ai-status"></div>
+      </div>
+    </div>
+
+    <!-- Previsualización de la propuesta del modelo (original vs propuesta) -->
+    <div id="ai-preview" class="ai-overlay" hidden>
+      <div class="ai-box ai-box-wide">
+        <div class="ai-box-h"><span>Propuesta del modelo</span><button id="ai-prev-x" class="ai-x" title="Cerrar">✕</button></div>
+        <div class="ai-diff">
+          <div class="ai-col"><div class="ai-col-h">Original</div><pre id="ai-orig" class="ai-pre"></pre></div>
+          <div class="ai-col"><div class="ai-col-h">Propuesta</div><pre id="ai-new" class="ai-pre"></pre></div>
+        </div>
+        <div class="ai-actions">
+          <button id="ai-reject" class="vbtn">Descartar</button>
+          <button id="ai-accept" class="btn-primary">Aceptar y guardar</button>
+        </div>
+        <div id="ai-prev-status" class="ai-status"></div>
+      </div>
+    </div>
+
+    <!-- Configuración de proveedores de IA por API -->
+    <div id="ai-config" class="ai-overlay" hidden>
+      <div class="ai-box">
+        <div class="ai-box-h"><span>⚙ Modelos por API</span><button id="ai-config-x" class="ai-x" title="Cerrar">✕</button></div>
+        <div class="ai-cfg">
+          <label for="ai-cfg-provider">Proveedor</label>
+          <select id="ai-cfg-provider">
+            <option value="deepseek">DeepSeek</option>
+            <option value="kimi">Kimi (Moonshot)</option>
+          </select>
+          <label for="ai-cfg-key">API key <span id="ai-cfg-haskey" class="ai-muted"></span></label>
+          <input id="ai-cfg-key" type="password" autocomplete="off" placeholder="pega la clave (se guarda en el servidor)" />
+          <label for="ai-cfg-base">Endpoint (base URL)</label>
+          <input id="ai-cfg-base" type="text" autocomplete="off" />
+          <label for="ai-cfg-model">Modelo</label>
+          <input id="ai-cfg-model" type="text" autocomplete="off" />
+          <button id="ai-cfg-save" class="btn-primary">Guardar</button>
+          <div id="ai-cfg-status" class="ai-status"></div>
+        </div>
+      </div>
+    </div>
+
     <!-- Overlay de dictado por voz (móvil): micro grande + transcripción en vivo -->
     <div id="voice-overlay" class="voice-overlay">
       <div class="voice-mic"><div class="voice-mic-icon">🎤</div></div>
@@ -216,6 +275,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=30"></script>
+  <script src="app.js?v=31"></script>
 </body>
 </html>

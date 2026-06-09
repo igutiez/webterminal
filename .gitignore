@@ -13,3 +13,5 @@ webterminal.db-*
 secret_key.txt
 backend/secret_key.txt
 .env
+ai_config.json
+backend/ai_config.json

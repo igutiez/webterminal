@@ -578,6 +578,7 @@
     setupKeybar();
     setupFiles();
     setupVoice();
+    setupAI();
     _updateTabsUI();   // pinta la barra (sesión actual; se completa al conectar)
 
     // OSC 52: cuando tmux (o cualquier app) "copia", emite esta secuencia con el
@@ -934,25 +935,30 @@
     _exitEdit();
     return true;
   }
+  // Escribe contenido en el archivo (SFTP). Devuelve {ok} o {ok:false, detail}.
+  async function _writeFile(path, content) {
+    if (!fsid) return { ok: false, detail: "Sin sesión SSH" };
+    const fd = new FormData();
+    fd.append("fsid", fsid); fd.append("path", path); fd.append("content", content);
+    try {
+      const res = await fetch("/files/write", { method: "POST", headers: fsHeaders(), body: fd });
+      const d = await res.json().catch(() => ({}));
+      return res.ok ? { ok: true } : { ok: false, detail: d.detail || ("Error " + res.status) };
+    } catch (_) { return { ok: false, detail: "Error de red" }; }
+  }
   async function _saveEdit() {
     const tab = _viewerTabs.get(_editTabId || _activeTab);
     const ta = $("viewer-edit-area");
     if (!tab || !ta) return;
-    if (!fsid) { showToast("Sin sesión SSH para guardar", true); return; }
     const content = ta.value;
-    const fd = new FormData();
-    fd.append("fsid", fsid); fd.append("path", tab.path); fd.append("content", content);
     const sv = $("viewer-save"); if (sv) sv.disabled = true;
-    try {
-      const res = await fetch("/files/write", { method: "POST", headers: fsHeaders(), body: fd });
-      const d = await res.json().catch(() => ({}));
-      if (!res.ok) { showToast(d.detail || ("No se pudo guardar (" + res.status + ")"), true); return; }
-      tab.content = content;
-      showToast("Guardado ✓ " + tab.name);
-      _exitEdit();
-      _renderViewer(tab);
-    } catch (_) { showToast("Error de red al guardar", true); }
-    finally { if (sv) sv.disabled = false; }
+    const r = await _writeFile(tab.path, content);
+    if (sv) sv.disabled = false;
+    if (!r.ok) { showToast(r.detail || "No se pudo guardar", true); return; }
+    tab.content = content;
+    showToast("Guardado ✓ " + tab.name);
+    _exitEdit();
+    _renderViewer(tab);
   }
 
   function _setupViewer() {
@@ -982,6 +988,193 @@
       if (mod && (e.key === "w" || e.key === "W")) {
         if (_activeTab !== _TAB_TERM) { e.preventDefault(); closeViewerTab(_activeTab); }
       }
+    });
+  }
+
+  // ---------- ENVIAR SELECCIÓN A UN MODELO (✨) ----------
+  // Selecciona texto en el visor (o el editor) y pídele a un modelo que lo cambie:
+  //  · a Claude en la sesión tmux activa → se inyecta instrucción + archivo + líneas + texto.
+  //  · a Kimi/DeepSeek por API → previsualizas; si aceptas, se guarda en el archivo
+  //    y se refresca la vista.
+  let _aiCtx = null;       // { tab, info } del diálogo abierto
+  let _aiPending = null;    // { info, proposed } de la previsualización
+  let _aiCfgData = null;    // config pública (sin claves) cacheada
+
+  function _lineRange(content, start, end) {
+    const l1 = content.slice(0, start).split("\n").length;
+    const l2 = content.slice(0, end).split("\n").length;
+    return [l1, l2];
+  }
+  // {text, start, end, whole, content} de la selección actual (editor o visor).
+  function _selectionInfo() {
+    const tab = _viewerTabs.get(_activeTab);
+    if (!tab) return null;
+    const ta = $("viewer-edit-area");
+    if (_editing && ta && !ta.hidden) {
+      const s = ta.selectionStart, e = ta.selectionEnd;
+      if (s != null && e != null && e > s)
+        return { text: ta.value.substring(s, e), start: s, end: e, whole: false, content: ta.value };
+      return { text: ta.value, start: 0, end: ta.value.length, whole: true, content: ta.value };
+    }
+    const code = $("viewer-code");
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount && !sel.isCollapsed && code &&
+        code.contains(sel.anchorNode) && code.contains(sel.focusNode)) {
+      const r = sel.getRangeAt(0);
+      const pre = document.createRange();
+      pre.selectNodeContents(code);
+      pre.setEnd(r.startContainer, r.startOffset);
+      const start = pre.toString().length;
+      const text = sel.toString();
+      return { text, start, end: start + text.length, whole: false, content: tab.content };
+    }
+    return { text: tab.content, start: 0, end: tab.content.length, whole: true, content: tab.content };
+  }
+
+  function _openAiDialog() {
+    const tab = _viewerTabs.get(_activeTab);
+    if (!tab) { showToast("Abre un archivo de texto primero", true); return; }
+    const info = _selectionInfo();
+    _aiCtx = { tab, info };
+    const [l1, l2] = _lineRange(info.content, info.start, info.end);
+    $("ai-ctx").textContent = (info.whole
+      ? "Todo el archivo"
+      : `Selección: líneas ${l1}–${l2} · ${info.text.length} caracteres`) + " · " + tab.name;
+    const st = $("ai-status"); st.textContent = ""; st.className = "ai-status";
+    $("ai-overlay").hidden = false;
+    const ta = $("ai-instruction"); if (ta) ta.focus();
+  }
+
+  async function _aiSend() {
+    if (!_aiCtx) return;
+    const { tab, info } = _aiCtx;
+    const target = $("ai-target").value;
+    const instruction = ($("ai-instruction").value || "").trim();
+    const st = $("ai-status");
+    if (!instruction) { st.textContent = "Escribe una instrucción."; st.className = "ai-status err"; return; }
+    const [l1, l2] = _lineRange(info.content, info.start, info.end);
+
+    if (target === "claude-tmux") {
+      if (!ws || ws.readyState !== WebSocket.OPEN) { st.textContent = "No hay terminal conectada."; st.className = "ai-status err"; return; }
+      const loc = info.whole ? `el archivo ${tab.path}` : `el archivo ${tab.path} (líneas ${l1}–${l2})`;
+      const msg = `${instruction}\n\nContexto: esto es sobre ${loc}. Texto a tratar:\n\n${info.text}\n`;
+      ws.send(msg);
+      setTimeout(() => { if (ws && ws.readyState === WebSocket.OPEN) ws.send("\r"); }, 150);
+      $("ai-overlay").hidden = true;
+      switchTab(_TAB_TERM);
+      showToast("Enviado a Claude (tmux) ✓");
+      return;
+    }
+    // API: kimi / deepseek
+    st.textContent = "Pensando… (puede tardar unos segundos)"; st.className = "ai-status";
+    const send = $("ai-send"); if (send) send.disabled = true;
+    try {
+      const fd = new FormData();
+      fd.append("provider", target);
+      fd.append("instruction", instruction);
+      fd.append("text", info.text);
+      const res = await fetch("/ai/run", { method: "POST", headers: fsHeaders(), body: fd });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { st.textContent = d.detail || ("Error " + res.status); st.className = "ai-status err"; return; }
+      $("ai-overlay").hidden = true;
+      _openAiPreview(info, d.text || "");
+    } catch (_) { st.textContent = "Error de red."; st.className = "ai-status err"; }
+    finally { if (send) send.disabled = false; }
+  }
+
+  function _openAiPreview(info, proposed) {
+    _aiPending = { info, proposed };
+    $("ai-orig").textContent = info.text;
+    $("ai-new").textContent = proposed;
+    const st = $("ai-prev-status"); st.textContent = ""; st.className = "ai-status";
+    $("ai-preview").hidden = false;
+  }
+
+  async function _aiAccept() {
+    if (!_aiPending || !_aiCtx) return;
+    const { info, proposed } = _aiPending;
+    const tab = _aiCtx.tab;
+    const newContent = info.content.slice(0, info.start) + proposed + info.content.slice(info.end);
+    const st = $("ai-prev-status"); st.textContent = "Guardando…"; st.className = "ai-status";
+    const acc = $("ai-accept"); if (acc) acc.disabled = true;
+    const r = await _writeFile(tab.path, newContent);
+    if (acc) acc.disabled = false;
+    if (!r.ok) { st.textContent = r.detail || "No se pudo guardar"; st.className = "ai-status err"; return; }
+    tab.content = newContent;
+    _aiPending = null;
+    $("ai-preview").hidden = true;
+    // refrescar la visualización con el cambio ya guardado
+    if (_viewerTabs.has(tab.id)) _activeTab = tab.id;
+    _exitEdit();
+    _ensureViewerVisible();
+    _renderViewer(tab);
+    _updateTabsUI();
+    showToast("Cambios guardados en " + tab.name + " ✓");
+  }
+
+  // ---- configuración de proveedores por API (⚙) ----
+  async function _openAiConfig() {
+    $("ai-config").hidden = false;
+    const st = $("ai-cfg-status"); st.textContent = "Cargando…"; st.className = "ai-status";
+    try {
+      const res = await fetch("/ai/config", { headers: fsHeaders() });
+      const d = await res.json();
+      _aiCfgData = d.providers || {};
+      _fillAiConfig();
+      st.textContent = "";
+    } catch (_) { st.textContent = "No se pudo cargar la config."; st.className = "ai-status err"; }
+  }
+  function _fillAiConfig() {
+    const p = $("ai-cfg-provider").value;
+    const c = (_aiCfgData || {})[p] || {};
+    $("ai-cfg-key").value = "";
+    $("ai-cfg-haskey").textContent = c.has_key ? "· ya configurada (deja vacío para no cambiarla)" : "· sin configurar";
+    $("ai-cfg-base").value = c.base_url || "";
+    $("ai-cfg-model").value = c.model || "";
+  }
+  async function _saveAiConfig() {
+    const p = $("ai-cfg-provider").value;
+    const st = $("ai-cfg-status"); st.textContent = "Guardando…"; st.className = "ai-status";
+    const fd = new FormData();
+    fd.append("provider", p);
+    fd.append("api_key", $("ai-cfg-key").value);
+    fd.append("base_url", $("ai-cfg-base").value);
+    fd.append("model", $("ai-cfg-model").value);
+    try {
+      const res = await fetch("/ai/config", { method: "POST", headers: fsHeaders(), body: fd });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { st.textContent = d.detail || "Error al guardar"; st.className = "ai-status err"; return; }
+      _aiCfgData = d.providers || {};
+      _fillAiConfig();
+      st.textContent = "Guardado ✓"; st.className = "ai-status ok";
+    } catch (_) { st.textContent = "Error de red."; st.className = "ai-status err"; }
+  }
+
+  function setupAI() {
+    const cfgBtn = $("ai-config-btn"); if (cfgBtn) cfgBtn.addEventListener("click", _openAiConfig);
+    const aiBtn = $("viewer-ai");
+    if (aiBtn) {
+      // preventDefault en mousedown para no robar la selección de texto del visor
+      aiBtn.addEventListener("mousedown", (e) => e.preventDefault());
+      aiBtn.addEventListener("click", _openAiDialog);
+    }
+    const send = $("ai-send"); if (send) send.addEventListener("click", _aiSend);
+    const cancel = $("ai-cancel"); if (cancel) cancel.addEventListener("click", () => { $("ai-overlay").hidden = true; });
+    const acc = $("ai-accept"); if (acc) acc.addEventListener("click", _aiAccept);
+    const rej = $("ai-reject"); if (rej) rej.addEventListener("click", () => { $("ai-preview").hidden = true; _aiPending = null; });
+    const px = $("ai-prev-x"); if (px) px.addEventListener("click", () => { $("ai-preview").hidden = true; _aiPending = null; });
+    const cx = $("ai-config-x"); if (cx) cx.addEventListener("click", () => { $("ai-config").hidden = true; });
+    const prov = $("ai-cfg-provider"); if (prov) prov.addEventListener("change", _fillAiConfig);
+    const csave = $("ai-cfg-save"); if (csave) csave.addEventListener("click", _saveAiConfig);
+    // Cerrar al pulsar en el fondo oscuro.
+    ["ai-overlay", "ai-preview", "ai-config"].forEach((id) => {
+      const ov = $(id);
+      if (ov) ov.addEventListener("click", (e) => { if (e.target === ov) ov.hidden = true; });
+    });
+    // Escape cierra cualquier overlay de IA abierto.
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape") return;
+      ["ai-overlay", "ai-preview", "ai-config"].forEach((id) => { const o = $(id); if (o && !o.hidden) o.hidden = true; });
     });
   }
 

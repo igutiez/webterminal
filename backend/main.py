@@ -33,6 +33,7 @@ from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile, WebS
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+import ai
 import auth
 import db
 import email_service
@@ -796,6 +797,50 @@ async def files_rename(
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"No se pudo renombrar/mover: {exc}")
     return {"ok": True, "path": dst}
+
+
+# ============================== MODELOS DE IA (API) ==============================
+# Configurar claves de proveedores (Kimi/DeepSeek) y pedirles que transformen un
+# texto seleccionado. La clave se guarda en el servidor y nunca se devuelve.
+
+@app.get("/ai/config")
+async def ai_config_get(authorization: str | None = Header(default=None)):
+    _bearer(authorization)
+    return {"providers": ai.public_config()}
+
+
+@app.post("/ai/config")
+async def ai_config_set(
+    authorization: str | None = Header(default=None),
+    provider: str = Form(...),
+    api_key: str = Form(default=""),
+    base_url: str = Form(default=""),
+    model: str = Form(default=""),
+):
+    web_email = _bearer(authorization)
+    if not ai.set_provider(provider, api_key or None, base_url or None, model or None):
+        raise HTTPException(status_code=400, detail="Proveedor no soportado")
+    log.info("ai config updated web=%s provider=%s key=%s", web_email, provider, "sí" if api_key else "no")
+    return {"ok": True, "providers": ai.public_config()}
+
+
+@app.post("/ai/run")
+async def ai_run(
+    authorization: str | None = Header(default=None),
+    provider: str = Form(...),
+    instruction: str = Form(...),
+    text: str = Form(...),
+):
+    _bearer(authorization)
+    if not instruction.strip() or not text.strip():
+        raise HTTPException(status_code=400, detail="Falta instrucción o texto")
+    try:
+        result = await asyncio.to_thread(ai.complete, provider, instruction, text)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=str(exc))
+    return {"text": result}
 
 
 @app.get("/manifest.webmanifest", include_in_schema=False)
