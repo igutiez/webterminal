@@ -2014,6 +2014,28 @@
     fsRefit(); if (term) term.focus();
   }
   function fsToggle() { fsIsOpen() ? fsClose() : fsOpen(); }
+  // Lateral de archivos redimensionable (tirador en el borde derecho, persistente).
+  function _setupFilesResizer() {
+    const side = $("files-side"), grip = $("files-resizer");
+    if (!side || !grip) return;
+    try { const w = parseInt(localStorage.getItem("wt_files_w"), 10); if (w >= 180 && w <= 700) side.style.setProperty("--files-w", w + "px"); } catch (_) {}
+    let dragging = false;
+    const onMove = (clientX) => {
+      let w = clientX - side.getBoundingClientRect().left;
+      w = Math.max(180, Math.min(700, w));
+      side.style.setProperty("--files-w", w + "px");
+      try { localStorage.setItem("wt_files_w", String(Math.round(w))); } catch (_) {}
+      fsRefit();
+    };
+    const start = (e) => { dragging = true; grip.classList.add("dragging"); document.body.style.userSelect = "none"; document.body.style.cursor = "col-resize"; e.preventDefault(); };
+    const end = () => { if (!dragging) return; dragging = false; grip.classList.remove("dragging"); document.body.style.userSelect = ""; document.body.style.cursor = ""; fsRefit(); };
+    grip.addEventListener("mousedown", start);
+    window.addEventListener("mousemove", (e) => { if (dragging) onMove(e.clientX); });
+    window.addEventListener("mouseup", end);
+    grip.addEventListener("touchstart", start, { passive: false });
+    window.addEventListener("touchmove", (e) => { if (dragging && e.touches[0]) { onMove(e.touches[0].clientX); e.preventDefault(); } }, { passive: false });
+    window.addEventListener("touchend", end);
+  }
   function setupFiles() {
     const btn = $("files-btn"); if (btn) btn.addEventListener("click", fsToggle);
     const c = $("files-close"); if (c) c.addEventListener("click", fsClose);
@@ -2022,6 +2044,7 @@
       fsList(parent);
     });
     const rf = $("files-refresh"); if (rf) rf.addEventListener("click", () => fsList(fsPath));
+    _setupFilesResizer();
     _setupViewer();
     const nf = $("files-newfile"); if (nf) nf.addEventListener("click", fsNewFile);
     const mk = $("files-mkdir"); if (mk) mk.addEventListener("click", fsMkdir);

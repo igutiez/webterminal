@@ -287,10 +287,14 @@ body.is-mobile .tmux-panel { top: 50px; }
 
 /* ---------- explorador de archivos (barra lateral estilo Warp) ---------- */
 .files-side {
-  flex: 0 0 320px; width: 320px; min-width: 0; display: none; flex-direction: column;
+  flex: 0 0 var(--files-w, 320px); width: var(--files-w, 320px); min-width: 0; display: none; flex-direction: column;
   background: var(--panel); border-right: 1px solid var(--border); position: relative;
 }
 body.files-open .files-side { display: flex; }
+/* Tirador para ensanchar el lateral de archivos (borde derecho). */
+.files-resizer { position: absolute; top: 0; right: -4px; width: 9px; height: 100%; cursor: col-resize; z-index: 50; }
+.files-resizer::before { content: ""; position: absolute; top: 0; bottom: 0; left: 4px; width: 2px; background: transparent; }
+.files-resizer:hover::before, .files-resizer.dragging::before { background: var(--accent); }
 
 .fs-head {
   flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 8px;
@@ -354,6 +358,7 @@ body.files-open .files-side { display: flex; }
   body.files-open .files-side {
     position: absolute; inset: 0; z-index: 80; flex: 1 1 auto; width: 100%; border-right: none;
   }
+  .files-resizer { display: none; }   /* a pantalla completa no se redimensiona */
   .frow .fops { opacity: 1; }
   .fop { width: 30px; height: 28px; }
   #split-btn { display: none; }   /* la vista dividida no aplica en móvil */
