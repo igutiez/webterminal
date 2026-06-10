@@ -712,7 +712,7 @@
     if (!_tabsRestored) return;   // no guardes [] antes de restaurar (pisaría la lista)
     try {
       const arr = [];
-      _viewerTabs.forEach((t) => arr.push({ path: t.path, name: t.name }));
+      _viewerTabs.forEach((t) => { if (t.path) arr.push({ path: t.path, name: t.name }); });   // solo archivos (no previews)
       localStorage.setItem("wt_open_tabs", JSON.stringify(arr));
     } catch (_) {}
   }
@@ -790,11 +790,14 @@
   // Muestra/oculta los botones que solo tienen sentido en archivos de texto.
   function _applyToolbarForTab(tab) {
     const isImg = !!tab && tab.kind === "image";
+    const isPrev = !!tab && tab.kind === "preview";
+    const hideText = isImg || isPrev;
     ["viewer-ai", "viewer-edit", "viewer-wrap", "viewer-copy", "viewer-font-dec", "viewer-font-inc"].forEach((id) => {
-      const b = $(id); if (b) b.style.display = isImg ? "none" : "";
+      const b = $(id); if (b) b.style.display = hideText ? "none" : "";
     });
-    const runBtn = $("viewer-run");
-    if (runBtn) runBtn.hidden = !(tab && tab.kind !== "image" && _runnable(tab.name));
+    const dl = $("viewer-download"); if (dl) dl.style.display = isPrev ? "none" : "";   // preview no se descarga
+    const runBtn = $("viewer-run"); if (runBtn) runBtn.hidden = !(tab && !hideText && _runnable(tab.name));
+    const ext = $("viewer-openext"); if (ext) ext.hidden = !isPrev;                     // abrir en navegador: solo preview
   }
   // ---------- Ejecutar archivos en la terminal (.py, .sh, .js…) ----------
   const _RUN = {
@@ -905,9 +908,18 @@
   // Decide qué panel del visor se ve (texto plano vs Markdown) según el archivo
   // y la preferencia _mdRendered. El botón MD solo aparece en archivos .md.
   function _applyViewMode(tab) {
-    const pre = $("viewer-pre"), md = $("viewer-md"), btn = $("viewer-md-btn"), imgp = $("viewer-img");
+    const pre = $("viewer-pre"), md = $("viewer-md"), btn = $("viewer-md-btn"), imgp = $("viewer-img"), ifr = $("viewer-iframe");
     if (_editing) return;   // editando manda el textarea; no tocamos paneles
     _applyToolbarForTab(tab);
+    if (tab && tab.kind === "preview") {   // preview: solo el iframe
+      if (pre) pre.hidden = true;
+      if (md) md.hidden = true;
+      if (imgp) imgp.hidden = true;
+      if (ifr) ifr.hidden = false;
+      if (btn) btn.hidden = true;
+      return;
+    }
+    if (ifr) ifr.hidden = true;
     if (tab && tab.kind === "image") {   // imágenes: solo el panel <img>
       if (pre) pre.hidden = true;
       if (md) md.hidden = true;
@@ -946,7 +958,7 @@
   }
   function _openFind() {
     const tab = _viewerTabs.get(_activeTab);
-    if (!tab || _activeTab === _TAB_TERM || _editing || tab.kind === "image") return;
+    if (!tab || _activeTab === _TAB_TERM || _editing || tab.kind === "image" || tab.kind === "preview") return;
     const pre = $("viewer-pre"), md = $("viewer-md");
     if (md) md.hidden = true;
     if (pre) pre.hidden = false;       // la búsqueda necesita el texto plano
@@ -1104,6 +1116,14 @@
   function _renderViewer(tab) {
     if (!tab) return;
     _lastViewerId = tab.id;   // recordamos el último archivo visto (para el split)
+    if (tab.kind === "preview") {   // webapp local en iframe
+      const f = $("viewer-iframe");
+      if (f && f.dataset.port !== String(tab.port)) { f.src = tab.url; f.dataset.port = String(tab.port); }
+      $("viewer-name").textContent = tab.name;
+      $("viewer-meta").textContent = "127.0.0.1:" + tab.port;
+      _applyViewMode(tab);
+      return;
+    }
     if (tab.kind === "image") {     // archivos de imagen: panel <img>, sin gutter ni texto
       const img = $("viewer-img-el");
       if (img) { img.src = tab.url; img.alt = tab.name; }
@@ -1287,6 +1307,33 @@
   }
   function _ensureTerminalVisible() { _applyPanes(); }
   function _ensureViewerVisible() { _applyPanes(); }
+
+  // ---------- Preview de webapp local (iframe → proxy a 127.0.0.1:PUERTO) ----------
+  async function _openPreview() {
+    let last = "8000";
+    try { last = localStorage.getItem("wt_preview_port") || "8000"; } catch (_) {}
+    const raw = window.prompt("Puerto local de tu webapp (127.0.0.1:PUERTO):", last);
+    if (raw === null) return;
+    const port = parseInt(String(raw).trim(), 10);
+    if (!(port >= 1 && port <= 65535)) { showToast("Puerto no válido", true); return; }
+    try { localStorage.setItem("wt_preview_port", String(port)); } catch (_) {}
+    // Autorizar el iframe (deja una cookie de preview).
+    try {
+      const r = await fetch("/preview/auth", { method: "POST", headers: { Authorization: "Bearer " + jwt } });
+      if (!r.ok) { showToast("No autorizado para el preview", true); return; }
+    } catch (_) { showToast("Error de red al abrir el preview", true); return; }
+    // Reutiliza la pestaña si ya hay un preview de ese puerto.
+    for (const t of _viewerTabs.values()) if (t.kind === "preview" && t.port === port) { switchTab(t.id); return; }
+    const id = "v" + (++_tabSeq);
+    _viewerTabs.set(id, { id, kind: "preview", port, name: "Preview :" + port, url: "/preview/" + port + "/", content: "" });
+    if (_splitActive()) { _routeFileToFocus(id); }
+    else { _activeTab = id; _ensureViewerVisible(); _renderViewer(_viewerTabs.get(id)); _updateTabsUI(); }
+    showToast("Preview del puerto " + port);
+  }
+  function _openExternal() {
+    const t = _viewerTabs.get(_activeTab);
+    if (t && t.kind === "preview") window.open(t.url, "_blank", "noopener");
+  }
 
   // ---------- Modal/lightbox de imagen a pantalla completa ----------
   function _openImgModal(url, alt) {
@@ -1583,6 +1630,11 @@
   async function _viewerReload() {
     const t = _viewerTabs.get(_activeTab);
     if (!t) return;
+    if (t.kind === "preview") {   // recargar el iframe de la webapp
+      const f = $("viewer-iframe");
+      try { f.contentWindow.location.reload(); } catch (_) { if (f) f.src = t.url; }
+      fsStatus("Preview recargado ✓", "ok"); return;
+    }
     if (t.kind === "image") {   // recargar imagen = volver a pedir los bytes (cache-bust)
       const img = $("viewer-img-el"); if (img) img.src = _fileURL(t.path) + "&_=" + Date.now();
       fsStatus("Imagen recargada ✓", "ok"); return;
@@ -1747,10 +1799,14 @@
     if (reload) reload.addEventListener("click", _viewerReload);
     const runb = $("viewer-run");
     if (runb) runb.addEventListener("click", _runFile);
+    const ext = $("viewer-openext");
+    if (ext) ext.addEventListener("click", _openExternal);
     const dl = $("viewer-download");
     if (dl) dl.addEventListener("click", () => { const t = _viewerTabs.get(_activeTab); if (t) fsDownload(t.path); });
     const splitBtn = $("split-btn");
     if (splitBtn) splitBtn.addEventListener("click", _toggleSplit);
+    const prevBtn = $("preview-btn");
+    if (prevBtn) prevBtn.addEventListener("click", _openPreview);
     _setupSplitDrag();
     _setupPaneFocus();
     _setupImgModal();

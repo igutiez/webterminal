@@ -26,11 +26,13 @@ import stat as stat_mod
 import subprocess
 import tempfile
 import time
+import urllib.error
+import urllib.request
 from urllib.parse import quote
 
 import paramiko
-from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile, WebSocket
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import FastAPI, File, Form, Header, HTTPException, Request, UploadFile, WebSocket
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 import ai
@@ -84,6 +86,10 @@ def _resolve_term(fsid: str, web_email: str):
 @app.middleware("http")
 async def security_headers(request, call_next):
     resp = await call_next(request)
+    # El proxy de preview gestiona sus propias cabeceras: NO le metemos X-Frame-Options
+    # DENY ni el CSP estricto (si no, el iframe no mostraría la webapp proxeada).
+    if request.url.path.startswith("/preview"):
+        return resp
     resp.headers["X-Frame-Options"] = "DENY"
     resp.headers["X-Content-Type-Options"] = "nosniff"
     resp.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
@@ -898,6 +904,118 @@ async def manifest():
         os.path.join(FRONTEND_DIR, "manifest.webmanifest"),
         media_type="application/manifest+json",
     )
+
+
+# ============================ PREVIEW DE WEBAPP LOCAL ============================
+# Proxy inverso a 127.0.0.1:PUERTO (el servidor de desarrollo del usuario corre en
+# la MISMA máquina que este backend, ya que el SSH es a 127.0.0.1). Permite ver una
+# webapp local dentro de un iframe en terminal.messor.app, sin montar subdominio.
+# Auth por cookie (el iframe no puede mandar cabeceras). Reescribe URLs root-relative
+# y mete <base> para que los recursos del app resuelvan bajo /preview/<puerto>/.
+
+_PREVIEW_HOST = "127.0.0.1"
+_HOP_HEADERS = {
+    "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te",
+    "trailers", "transfer-encoding", "upgrade", "content-length", "content-encoding", "host",
+}
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):  # no seguir 3xx: los devolvemos al navegador
+        return None
+
+
+_preview_opener = urllib.request.build_opener(_NoRedirect)
+
+
+def _preview_fetch(method, url, headers, body):
+    req = urllib.request.Request(url, data=body, method=method)
+    for k, v in headers.items():
+        req.add_header(k, v)
+    try:
+        r = _preview_opener.open(req, timeout=30)
+        return r.status, list(r.headers.items()), r.read()
+    except urllib.error.HTTPError as e:   # 3xx/4xx/5xx llegan aquí: son la respuesta
+        return e.code, list(e.headers.items()), e.read()
+
+
+def _preview_rewrite_html(text, prefix):
+    text = re.sub(r"(<head[^>]*>)", r'\1<base href="' + prefix + '/">', text, count=1, flags=re.I)
+    text = re.sub(r'((?:href|src|action)\s*=\s*["\'])/(?!/)', r"\1" + prefix + "/", text, flags=re.I)
+    text = re.sub(r'(url\(\s*["\']?)/(?!/)', r"\1" + prefix + "/", text, flags=re.I)
+    return text
+
+
+@app.post("/preview/auth")
+async def preview_auth(authorization: str | None = Header(default=None)):
+    """Valida el JWT y deja una cookie (path=/preview) para que el iframe y sus
+    sub-peticiones queden autorizados."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Falta token")
+    token = authorization[7:]
+    auth.verify_token(token)   # lanza si no es válido
+    r = JSONResponse({"ok": True})
+    r.set_cookie("preview_token", token, path="/preview", httponly=True, secure=True, samesite="lax", max_age=86400)
+    return r
+
+
+@app.get("/preview/{port}", include_in_schema=False)
+async def preview_root(port: int):
+    return RedirectResponse(url=f"/preview/{port}/")
+
+
+@app.api_route("/preview/{port}/{path:path}",
+               methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+               include_in_schema=False)
+async def preview_proxy(port: int, path: str, request: Request):
+    try:
+        auth.verify_token(request.cookies.get("preview_token", ""))
+    except Exception:
+        raise HTTPException(status_code=401, detail="Preview no autorizado (reábrelo)")
+    if port < 1 or port > 65535:
+        raise HTTPException(status_code=400, detail="Puerto inválido")
+    prefix = f"/preview/{port}"
+    url = f"http://{_PREVIEW_HOST}:{port}/{path}"
+    if request.url.query:
+        url += "?" + request.url.query
+    body = await request.body()
+    fwd = {k: v for k, v in request.headers.items()
+           if k.lower() not in _HOP_HEADERS and k.lower() != "cookie"}
+    try:
+        status, hdrs, content = await asyncio.to_thread(
+            _preview_fetch, request.method, url, fwd, body if body else None)
+    except urllib.error.URLError as exc:
+        html = (
+            "<!doctype html><html><body style=\"font-family:system-ui;background:#0d0d1a;"
+            "color:#e8e8ef;padding:40px;line-height:1.6\"><h2>Nada escuchando en el puerto "
+            f"{port}</h2><p>Arranca tu servidor de desarrollo (p.ej. <code>python app.py</code> "
+            "o <code>npm run dev</code>) en ese puerto y pulsa recargar.</p>"
+            f"<p style=\"color:#888\">{exc}</p></body></html>"
+        )
+        return Response(content=html, status_code=502, media_type="text/html")
+
+    out_headers = {}
+    ctype = ""
+    for k, v in hdrs:
+        kl = k.lower()
+        if kl in _HOP_HEADERS or kl in ("content-security-policy", "x-frame-options",
+                                        "strict-transport-security", "content-security-policy-report-only"):
+            continue
+        if kl == "content-type":
+            ctype = v
+        if kl == "location":
+            if v.startswith("/") and not v.startswith("//"):
+                v = prefix + v
+            out_headers["Location"] = v
+            continue
+        out_headers[k] = v
+    if "text/html" in ctype.lower():
+        try:
+            content = _preview_rewrite_html(content.decode("utf-8", errors="replace"), prefix).encode("utf-8")
+        except Exception:  # noqa: BLE001
+            pass
+    return Response(content=content, status_code=status, headers=out_headers,
+                    media_type=ctype or None)
 
 
 app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="static")
