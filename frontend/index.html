@@ -26,7 +26,7 @@
   <script src="https://unpkg.com/xterm-addon-canvas@0.5.0/lib/xterm-addon-canvas.js"></script>
 
   <link rel="stylesheet" href="hljs-dracula.css?v=1" />
-  <link rel="stylesheet" href="style.css?v=42" />
+  <link rel="stylesheet" href="style.css?v=43" />
 </head>
 <body>
   <!-- Sprite de iconos SVG (local, mismo aspecto en Safari/Chrome/iOS/Android). Lucide, ISC. -->
@@ -230,7 +230,10 @@
             <pre id="viewer-pre" class="viewer-pre wrap"><div id="viewer-gutter" class="viewer-gutter"></div><code id="viewer-code" class="viewer-code"></code></pre>
             <div id="viewer-md" class="viewer-md" hidden></div>
             <div id="viewer-img" class="viewer-img" hidden><img id="viewer-img-el" alt="" /></div>
-            <textarea id="viewer-edit-area" class="viewer-edit-area" spellcheck="false" hidden></textarea>
+            <div id="viewer-edit-wrap" class="viewer-edit-wrap" hidden>
+              <pre id="viewer-edit-hl" class="viewer-edit-hl" aria-hidden="true"><code id="viewer-edit-code"></code></pre>
+              <textarea id="viewer-edit-area" class="viewer-edit-area" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
+            </div>
           </div>
         </div>
       </div>
@@ -333,6 +336,6 @@
   </div>
 
   <script src="highlight.min.js?v=1"></script>
-  <script src="app.js?v=48"></script>
+  <script src="app.js?v=49"></script>
 </body>
 </html>

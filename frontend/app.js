@@ -762,6 +762,7 @@
     const px = _viewerFont + "px";
     const pre = $("viewer-pre"); if (pre) pre.style.fontSize = px;
     const ta = $("viewer-edit-area"); if (ta) ta.style.fontSize = px;
+    const hl = $("viewer-edit-hl"); if (hl) hl.style.fontSize = px;   // capa coloreada del editor
     // La vista Markdown es prosa, no monoespaciada: le damos un punto más para que respire.
     const md = $("viewer-md"); if (md) md.style.fontSize = (_viewerFont + 1) + "px";
   }
@@ -1014,6 +1015,84 @@
       code.innerHTML = hljs.highlight(tab.content, { language: lang, ignoreIllegals: true }).value;
       code.classList.add("hljs");
     } catch (_) {}
+  }
+
+  // ---------- Editor con resaltado en vivo + sangría inteligente (PEP8 en .py) ----------
+  // Pinta el contenido del textarea en la capa coloreada de detrás.
+  function _syncEditorHL() {
+    const ta = $("viewer-edit-area"), code = $("viewer-edit-code");
+    if (!ta || !code) return;
+    const tab = _viewerTabs.get(_editTabId);
+    const lang = tab ? _hljsLang(tab.name) : null;
+    let val = ta.value;
+    if (val.endsWith("\n")) val += " ";   // evita que la última línea descuadre el alto
+    if (typeof hljs !== "undefined" && lang && hljs.getLanguage(lang) && val.length < 300000) {
+      try { code.className = "hljs"; code.innerHTML = hljs.highlight(val, { language: lang, ignoreIllegals: true }).value; return; }
+      catch (_) {}
+    }
+    code.className = ""; code.textContent = val;
+  }
+  function _syncEditorScroll() {
+    const ta = $("viewer-edit-area"), hl = $("viewer-edit-hl");
+    if (ta && hl) { hl.scrollTop = ta.scrollTop; hl.scrollLeft = ta.scrollLeft; }
+  }
+  // Unidad de sangría: PEP8 = 4 espacios en Python; 2 en el resto. Nunca tabuladores.
+  function _indentUnit(tab) { return (tab && _hljsLang(tab.name) === "python") ? "    " : "  "; }
+  function _afterManualEdit() {
+    _syncEditorHL(); _syncEditorScroll();
+    const tab = _viewerTabs.get(_editTabId);
+    if (tab) { const ta = $("viewer-edit-area"); if (ta && ta.value !== tab.content) _saveDraft(tab, ta.value); }
+  }
+  function _editorKeydown(e) {
+    if (e.key === "Tab" || e.key === "Enter") {
+      const ta = e.target, tab = _viewerTabs.get(_editTabId), unit = _indentUnit(tab);
+      if (e.key === "Tab") {
+        e.preventDefault();
+        if (ta.selectionStart !== ta.selectionEnd) { _indentLines(ta, unit, e.shiftKey); _afterManualEdit(); }
+        else if (e.shiftKey) { _dedentCaret(ta, unit); _afterManualEdit(); }
+        else { document.execCommand("insertText", false, unit); }   // insertText conserva deshacer
+      } else {   // Enter: copia la sangría de la línea y añade un nivel tras ':' o apertura de bloque
+        e.preventDefault();
+        const v = ta.value, pos = ta.selectionStart;
+        const lineStart = v.lastIndexOf("\n", pos - 1) + 1;
+        const before = v.slice(lineStart, pos);
+        const indent = (before.match(/^[ \t]*/) || [""])[0];
+        const extra = /[:\{\[\(]$/.test(before.replace(/\s+$/, "")) ? unit : "";   // tras ':' o apertura de bloque
+        document.execCommand("insertText", false, "\n" + indent + extra);
+      }
+    }
+  }
+  // Sangra/desangra todas las líneas de la selección.
+  function _indentLines(ta, unit, dedent) {
+    const v = ta.value, selEnd = ta.selectionEnd;
+    const startLine = v.lastIndexOf("\n", ta.selectionStart - 1) + 1;
+    const region = v.slice(startLine, selEnd), after = v.slice(selEnd);
+    const lines = region.split("\n");
+    let total = 0, first = 0;
+    const out = lines.map((ln, i) => {
+      if (dedent) {
+        const m = (ln.match(/^[ \t]+/) || [""])[0];
+        const rm = Math.min(unit.length, m.length);
+        if (i === 0) first = -rm; total -= rm;
+        return ln.slice(rm);
+      }
+      if (i === 0) first = unit.length; total += unit.length;
+      return ln === "" ? ln : unit + ln;
+    });
+    ta.value = v.slice(0, startLine) + out.join("\n") + after;
+    ta.selectionStart = Math.max(startLine, ta.selectionStart + first);
+    ta.selectionEnd = selEnd + total;
+  }
+  // Shift+Tab sin selección: quita un nivel al principio de la línea del cursor.
+  function _dedentCaret(ta, unit) {
+    const v = ta.value, pos = ta.selectionStart;
+    const lineStart = v.lastIndexOf("\n", pos - 1) + 1;
+    const lead = (v.slice(lineStart).match(/^[ \t]+/) || [""])[0];
+    const rm = Math.min(unit.length, lead.length);
+    if (!rm) return;
+    ta.value = v.slice(0, lineStart) + v.slice(lineStart + rm);
+    const np = Math.max(lineStart, pos - rm);
+    ta.selectionStart = ta.selectionEnd = np;
   }
 
   function _renderViewer(tab) {
@@ -1469,6 +1548,7 @@
         if (window.confirm("Tienes cambios sin guardar de antes en “" + tabNew.name + "”. ¿Recuperarlos para seguir editando?")) {
           _enterEdit();
           const ta = $("viewer-edit-area"); if (ta) ta.value = draft;
+          _syncEditorHL();
         } else {
           _clearDraft(tabNew);
         }
@@ -1546,8 +1626,10 @@
     if (!tab) return;
     if (_findActive) _resetFind();   // editar y buscar no conviven
     _editing = true; _editTabId = tab.id;
-    const ta = $("viewer-edit-area");
-    if (ta) { ta.value = tab.content; ta.hidden = false; ta.style.fontSize = _viewerFont + "px"; }
+    const ta = $("viewer-edit-area"), wrap = $("viewer-edit-wrap");
+    if (ta) ta.value = tab.content;
+    if (wrap) wrap.hidden = false;
+    _applyViewerFont(); _syncEditorHL(); _syncEditorScroll();
     const pre = $("viewer-pre"); if (pre) pre.hidden = true;
     const md = $("viewer-md"); if (md) md.hidden = true;   // se edita siempre el texto crudo
     const sv = $("viewer-save"); if (sv) sv.hidden = false;
@@ -1556,7 +1638,7 @@
   }
   function _exitEdit() {
     _editing = false; _editTabId = null;
-    const ta = $("viewer-edit-area"); if (ta) ta.hidden = true;
+    const wrap = $("viewer-edit-wrap"); if (wrap) wrap.hidden = true;
     const sv = $("viewer-save"); if (sv) sv.hidden = true;
     const eb = $("viewer-edit"); if (eb) { eb.classList.remove("active"); eb.title = "Editar este archivo"; }
     // Restaura el panel correcto (texto plano o Markdown) según el archivo activo.
@@ -1650,7 +1732,11 @@
     _setupSplitDrag();
     _setupPaneFocus();
     const editArea = $("viewer-edit-area");
-    if (editArea) editArea.addEventListener("input", _onEditInput);
+    if (editArea) {
+      editArea.addEventListener("input", () => { _onEditInput(); _syncEditorHL(); _syncEditorScroll(); });
+      editArea.addEventListener("scroll", _syncEditorScroll);
+      editArea.addEventListener("keydown", _editorKeydown);
+    }
     const mdBtn = $("viewer-md-btn");
     if (mdBtn) mdBtn.addEventListener("click", _toggleMd);
     const fdec = $("viewer-font-dec");
