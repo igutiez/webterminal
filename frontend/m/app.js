@@ -233,15 +233,16 @@
   }
   function sendCompose() {
     const ta = $("compose-input"); const txt = ta.value.trim();
+    // Enter cierra el dictado: el mensaje ya se envía, y el resultado "interino"
+    // del micro volvería a rellenar la caja si lo dejáramos activo. Para seguir
+    // dictando, se vuelve a tocar el micro.
+    if (listening) stopVoice();
     if (txt && ws && ws.readyState === WebSocket.OPEN) {
       ws.send(txt);
       // El Intro va aparte y con retardo: si llega pegado, la TUI no lo registra.
       setTimeout(() => { if (ws && ws.readyState === WebSocket.OPEN) ws.send("\r"); }, 130);
     }
-    ta.value = "";
-    // Reinicia el dictado: si el micro sigue escuchando, su onresult NO debe
-    // repintar el texto recién enviado (era el bug: la caja se volvía a rellenar).
-    baseText = ""; vFinal = "";
+    ta.value = ""; baseText = ""; vFinal = "";
     autoGrow();
   }
   function setupCompose() {
@@ -270,6 +271,7 @@
     if (!recog) {
       recog = new SR(); recog.lang = "es-ES"; recog.continuous = true; recog.interimResults = true;
       recog.onresult = (ev) => {
+        if (!listening) return;   // micro apagado (p.ej. tras Enter): no repintar la caja
         let interim = "";
         for (let i = ev.resultIndex; i < ev.results.length; i++) {
           const r = ev.results[i];
