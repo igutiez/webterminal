@@ -119,6 +119,9 @@ label.remember input { width: auto; margin: 0; accent-color: var(--accent); curs
 }
 #panes > .panes-divider:hover, #panes > .panes-divider.dragging { background: var(--accent); }
 #panes > .panes-divider:hover::before, #panes > .panes-divider.dragging::before { background: #08131a; }
+/* Imán enganchado al 50/50: el asa crece y brilla. */
+#panes > .panes-divider.snapped { background: var(--green, #50fa7b); }
+#panes > .panes-divider.snapped::before { background: #08131a; height: 54px; width: 4px; box-shadow: 0 0 8px var(--green, #50fa7b); }
 /* Al arrastrar, los paneles no capturan el ratón (la terminal no roba el drag). */
 #panes.dragging > #terminal-container, #panes.dragging > #terminal-container-2, #panes.dragging > #viewer { pointer-events: none; }
 #panes.split > *:first-child { flex: 0 0 var(--split, 50%); }

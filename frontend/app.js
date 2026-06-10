@@ -1129,6 +1129,9 @@
       const r = panes.getBoundingClientRect();
       let pct = ((clientX - r.left) / r.width) * 100;
       pct = Math.max(20, Math.min(80, pct));
+      const snap = Math.abs(pct - 50) <= 3;   // imán: cerca del centro, ancla al 50/50
+      if (snap) pct = 50;
+      div.classList.toggle("snapped", snap);
       panes.style.setProperty("--split", pct + "%");
       _refitPanes();
     };
@@ -1141,10 +1144,12 @@
     const end = () => {
       if (!dragging) return;
       dragging = false;
-      div.classList.remove("dragging"); panes.classList.remove("dragging");
+      div.classList.remove("dragging", "snapped"); panes.classList.remove("dragging");
       document.body.style.userSelect = ""; document.body.style.cursor = "";
       _refitPanes();
     };
+    // Doble clic en el divisor = volver al reparto igual (50/50).
+    div.addEventListener("dblclick", () => { panes.style.setProperty("--split", "50%"); _refitPanes(); });
     // Ratón
     div.addEventListener("mousedown", start);
     window.addEventListener("mousemove", (e) => { if (dragging) onMove(e.clientX); });
