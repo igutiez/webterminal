@@ -637,7 +637,7 @@ async def files_read(fsid: str, path: str, authorization: str | None = Header(de
         raise HTTPException(status_code=400, detail=f"No se pudo leer: {exc}")
 
 
-def _fs_write_text(term, path, data: bytes):
+def _fs_write_text(term, path, data: bytes, expected_mtime=None):
     sftp = term.open_sftp()
     try:
         # No permitir sobrescribir una carpeta; un archivo inexistente se crea.
@@ -645,11 +645,24 @@ def _fs_write_text(term, path, data: bytes):
             st = sftp.stat(path)
             if stat_mod.S_ISDIR(st.st_mode):
                 raise HTTPException(status_code=400, detail="Es una carpeta, no un archivo")
+            # Detección de cambios externos: si el cliente trae el mtime que leyó
+            # y en disco es otro, alguien tocó el archivo por fuera. Devolvemos 409
+            # para que el editor avise antes de pisar nada.
+            if expected_mtime is not None and int(st.st_mtime or 0) != int(expected_mtime):
+                raise HTTPException(
+                    status_code=409,
+                    detail="El archivo ha cambiado fuera del editor desde que lo abriste.",
+                )
         except FileNotFoundError:
             pass
         with sftp.open(path, "wb") as fh:
             fh.write(data)
-        return {"ok": True, "size": len(data)}
+        new_mtime = 0
+        try:
+            new_mtime = int(sftp.stat(path).st_mtime or 0)
+        except Exception:  # noqa: BLE001
+            pass
+        return {"ok": True, "size": len(data), "mtime": new_mtime}
     finally:
         sftp.close()
 
@@ -659,17 +672,19 @@ async def files_write(
     fsid: str = Form(...),
     path: str = Form(...),
     content: str = Form(...),
+    expected_mtime: int | None = Form(default=None),
     authorization: str | None = Header(default=None),
 ):
     """Guarda el contenido (texto UTF-8) en el archivo, por SFTP sobre la sesión
-    SSH viva (mismos permisos que la terminal). Mismo tope que la lectura (2 MB)."""
+    SSH viva (mismos permisos que la terminal). Mismo tope que la lectura (2 MB).
+    Si llega `expected_mtime` y en disco es otro, responde 409 (cambio externo)."""
     web_email = _bearer(authorization)
     term = _resolve_term(fsid, web_email)
     data = content.encode("utf-8")
     if len(data) > MAX_TEXT_READ:
         raise HTTPException(status_code=413, detail=f"Archivo demasiado grande para guardar (máx {MAX_TEXT_READ} bytes)")
     try:
-        res = await asyncio.to_thread(_fs_write_text, term, path, data)
+        res = await asyncio.to_thread(_fs_write_text, term, path, data, expected_mtime)
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001

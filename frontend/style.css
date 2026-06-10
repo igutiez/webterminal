@@ -362,8 +362,26 @@ body.files-open .files-side { display: flex; }
 /* ---------- visor de archivos (pestaña de lectura) ---------- */
 .viewer {
   display: flex; flex-direction: column; min-width: 0; min-height: 0;
-  background: var(--bg); color: var(--text);
+  background: var(--bg); color: var(--text); position: relative;
 }
+
+/* Barra de búsqueda en archivo (Ctrl/Cmd+F), superpuesta arriba a la derecha. */
+.viewer-find {
+  position: absolute; top: 6px; right: 14px; z-index: 5;
+  display: flex; align-items: center; gap: 4px;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
+  padding: 4px 6px; box-shadow: 0 6px 20px rgba(0,0,0,.4);
+}
+.viewer-find[hidden] { display: none !important; }
+.viewer-find input {
+  background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  border-radius: 5px; padding: 4px 8px; font-size: 13px; width: 190px; outline: none;
+  font-family: inherit;
+}
+.viewer-find input:focus { border-color: var(--accent); }
+.viewer-find-count { color: var(--muted); font-size: 12px; min-width: 58px; text-align: center; white-space: nowrap; }
+mark.find-hit { background: rgba(255,210,0,.30); color: inherit; border-radius: 2px; }
+mark.find-current { background: var(--accent); color: #08131a; }
 /* Clave: el atributo [hidden] tiene la misma especificidad que .viewer; sin esto
    la clase gana y el visor se queda SIEMPRE visible partiendo la pantalla. */
 .viewer[hidden] { display: none !important; }

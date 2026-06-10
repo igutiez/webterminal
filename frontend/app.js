@@ -815,6 +815,65 @@
     _applyViewMode(tab);
   }
 
+  // ---------- Buscar en el archivo (Ctrl/Cmd+F) ----------
+  // Opera sobre el texto plano del visor; resalta coincidencias en <mark> y
+  // navega con Intro / Mayús+Intro. En .md fuerza la vista de texto mientras dura.
+  let _findMatches = [], _findIdx = -1, _findActive = false;
+  function _resetFind() {
+    _findActive = false; _findMatches = []; _findIdx = -1;
+    const bar = $("viewer-find"); if (bar) bar.hidden = true;
+  }
+  function _openFind() {
+    const tab = _viewerTabs.get(_activeTab);
+    if (!tab || _activeTab === _TAB_TERM || _editing) return;
+    const pre = $("viewer-pre"), md = $("viewer-md");
+    if (md) md.hidden = true;
+    if (pre) pre.hidden = false;       // la búsqueda necesita el texto plano
+    _findActive = true;
+    const bar = $("viewer-find"); if (bar) bar.hidden = false;
+    const inp = $("viewer-find-input");
+    if (inp) { inp.focus(); inp.select(); _runFind(); }
+  }
+  function _closeFind() {
+    _resetFind();
+    const tab = _viewerTabs.get(_activeTab);
+    if (tab) _renderViewer(tab);       // quita las marcas y restaura texto/Markdown
+    if (term) try { term.focus(); } catch (_) {}
+  }
+  function _findCount() {
+    const c = $("viewer-find-count"); if (!c) return;
+    const q = $("viewer-find-input"); if (!q || !q.value) { c.textContent = ""; return; }
+    c.textContent = _findMatches.length ? (_findIdx + 1) + " / " + _findMatches.length : "0 resultados";
+  }
+  function _runFind() {
+    const tab = _viewerTabs.get(_activeTab); if (!tab) return;
+    const code = $("viewer-code"); if (!code) return;
+    const q = ($("viewer-find-input") || {}).value || "";
+    if (!q) { code.textContent = tab.content; _findMatches = []; _findIdx = -1; _findCount(); return; }
+    const text = tab.content, lc = text.toLowerCase(), ql = q.toLowerCase();
+    const pos = []; let i = lc.indexOf(ql);
+    while (i !== -1) { pos.push(i); i = lc.indexOf(ql, i + ql.length); }
+    _findMatches = pos;
+    if (!pos.length) { _findIdx = -1; code.textContent = text; _findCount(); return; }
+    if (_findIdx < 0 || _findIdx >= pos.length) _findIdx = 0;
+    let html = "", last = 0;
+    pos.forEach((p, idx) => {
+      html += _escapeHtml(text.slice(last, p));
+      html += '<mark class="find-hit' + (idx === _findIdx ? " find-current" : "") + '">' + _escapeHtml(text.slice(p, p + q.length)) + "</mark>";
+      last = p + q.length;
+    });
+    html += _escapeHtml(text.slice(last));
+    code.innerHTML = html;
+    _findCount();
+    const cur = code.querySelector("mark.find-current");
+    if (cur && cur.scrollIntoView) cur.scrollIntoView({ block: "center", inline: "nearest" });
+  }
+  function _findStep(delta) {
+    if (!_findMatches.length) return;
+    _findIdx = (_findIdx + delta + _findMatches.length) % _findMatches.length;
+    _runFind();
+  }
+
   function _renderViewer(tab) {
     const code = $("viewer-code"); if (!code) return;
     const gut = $("viewer-gutter");
@@ -917,6 +976,7 @@
   function switchTab(id) {
     if (id !== _TAB_TERM && !_viewerTabs.has(id)) return;
     if (!_tryExitEdit()) return;   // cambios sin guardar → confirmar antes de salir
+    if (_findActive) _resetFind();
     _activeTab = id;
     if (id === _TAB_TERM) {
       _ensureTerminalVisible();
@@ -934,6 +994,7 @@
 
   function closeViewerTab(id) {
     if (_editing && _editTabId === id && !_tryExitEdit()) return;
+    if (_findActive) _resetFind();
     const wasActive = _activeTab === id;
     _viewerTabs.delete(id);
     if (wasActive) {
@@ -966,12 +1027,23 @@
       const d = await res.json().catch(() => ({}));
       if (!res.ok) { fsStatus(d.detail || ("Error " + res.status), "err"); return; }
       const id = "v" + (++_tabSeq);
-      _viewerTabs.set(id, { id, name: d.name || name, path, content: d.content || "" });
+      _viewerTabs.set(id, { id, name: d.name || name, path, content: d.content || "", mtime: d.mtime || 0 });
       _activeTab = id;
       _ensureViewerVisible();
       _renderViewer(_viewerTabs.get(id));
       _updateTabsUI();
       fsStatus("Abierto '" + d.name + "' ✓", "ok");
+      // ¿Quedó un borrador sin guardar de una sesión anterior? Ofrecer recuperarlo.
+      const tabNew = _viewerTabs.get(id);
+      const draft = _getDraft(tabNew);
+      if (draft != null && draft !== tabNew.content) {
+        if (window.confirm("Tienes cambios sin guardar de antes en “" + tabNew.name + "”. ¿Recuperarlos para seguir editando?")) {
+          _enterEdit();
+          const ta = $("viewer-edit-area"); if (ta) ta.value = draft;
+        } else {
+          _clearDraft(tabNew);
+        }
+      }
     } catch (_) { fsStatus("Error de red al abrir '" + name + "'", "err"); }
   }
 
@@ -983,6 +1055,7 @@
     if (_editing) {
       // No pisamos cambios sin guardar a la brava: que el usuario decida.
       if (!confirm("Hay cambios sin guardar en la edición. ¿Descartarlos y recargar desde el disco?")) return;
+      _clearDraft(t);
       _exitEdit();
     }
     if (!fsid) { fsStatus("Abre la terminal primero (el visor usa tu sesión SSH).", "err"); return; }
@@ -993,8 +1066,10 @@
       const d = await res.json().catch(() => ({}));
       if (!res.ok) { fsStatus(d.detail || ("Error " + res.status), "err"); return; }
       const fresh = d.content || "";
+      t.mtime = d.mtime || 0;   // siempre actualizamos el ancla de conflicto
       if (fresh === t.content) { fsStatus("'" + t.name + "' ya estaba al día ✓", "ok"); return; }
       t.content = fresh;
+      _clearDraft(t);           // el disco manda: descartamos cualquier borrador
       _renderViewer(t);
       fsStatus("'" + t.name + "' recargado desde el disco ✓", "ok");
     } catch (_) {
@@ -1036,6 +1111,7 @@
   function _enterEdit() {
     const tab = _viewerTabs.get(_activeTab);
     if (!tab) return;
+    if (_findActive) _resetFind();   // editar y buscar no conviven
     _editing = true; _editTabId = tab.id;
     const ta = $("viewer-edit-area");
     if (ta) { ta.value = tab.content; ta.hidden = false; ta.style.fontSize = _viewerFont + "px"; }
@@ -1061,18 +1137,41 @@
     const tab = _viewerTabs.get(_editTabId);
     const dirty = tab && ta && ta.value !== tab.content;
     if (dirty && !window.confirm("Tienes cambios sin guardar. ¿Descartarlos?")) return false;
+    if (tab) _clearDraft(tab);   // descarte explícito: fuera el borrador
     _exitEdit();
     return true;
   }
-  // Escribe contenido en el archivo (SFTP). Devuelve {ok} o {ok:false, detail}.
-  async function _writeFile(path, content) {
+  // ---------- Borrador automático (localStorage) ----------
+  // Mientras editas, se guarda lo escrito cada ~0,8 s; si cierras la pestaña del
+  // navegador o se cae, al reabrir el archivo se ofrece recuperarlo.
+  let _draftTimer = null;
+  function _draftKey(tab) { return "wt_draft:" + (tab.path || tab.name); }
+  function _saveDraft(tab, text) { try { localStorage.setItem(_draftKey(tab), text); } catch (_) {} }
+  function _clearDraft(tab) { try { localStorage.removeItem(_draftKey(tab)); } catch (_) {} }
+  function _getDraft(tab) { try { return localStorage.getItem(_draftKey(tab)); } catch (_) { return null; } }
+  function _onEditInput() {
+    if (!_editing) return;
+    const tab = _viewerTabs.get(_editTabId); if (!tab) return;
+    clearTimeout(_draftTimer);
+    _draftTimer = setTimeout(() => {
+      const ta = $("viewer-edit-area"); if (!ta) return;
+      if (ta.value !== tab.content) _saveDraft(tab, ta.value); else _clearDraft(tab);
+    }, 800);
+  }
+
+  // Escribe contenido en el archivo (SFTP). Devuelve {ok, mtime} o
+  // {ok:false, conflict?, detail}. Si se pasa expectedMtime y el backend ve otro
+  // mtime en disco responde 409 → conflict:true (cambio externo).
+  async function _writeFile(path, content, expectedMtime) {
     if (!fsid) return { ok: false, detail: "Sin sesión SSH" };
     const fd = new FormData();
     fd.append("fsid", fsid); fd.append("path", path); fd.append("content", content);
+    if (expectedMtime != null) fd.append("expected_mtime", String(expectedMtime));
     try {
       const res = await fetch("/files/write", { method: "POST", headers: fsHeaders(), body: fd });
       const d = await res.json().catch(() => ({}));
-      return res.ok ? { ok: true } : { ok: false, detail: d.detail || ("Error " + res.status) };
+      if (res.ok) return { ok: true, mtime: d.mtime || 0 };
+      return { ok: false, conflict: res.status === 409, detail: d.detail || ("Error " + res.status) };
     } catch (_) { return { ok: false, detail: "Error de red" }; }
   }
   async function _saveEdit() {
@@ -1081,10 +1180,22 @@
     if (!tab || !ta) return;
     const content = ta.value;
     const sv = $("viewer-save"); if (sv) sv.disabled = true;
-    const r = await _writeFile(tab.path, content);
+    let r = await _writeFile(tab.path, content, tab.mtime);
+    // Cambio externo: el archivo se tocó por fuera desde que lo abriste.
+    if (!r.ok && r.conflict) {
+      const ok = window.confirm(
+        "“" + tab.name + "” ha cambiado fuera del editor desde que lo abriste.\n\n" +
+        "Aceptar = sobrescribir con tu versión (se pierde lo de fuera).\n" +
+        "Cancelar = no guardar (luego puedes pulsar el botón de recargar para traer la versión del disco)."
+      );
+      if (!ok) { if (sv) sv.disabled = false; showToast("Guardado cancelado: revisa los cambios externos con el botón de recargar", true); return; }
+      r = await _writeFile(tab.path, content, null);   // forzar sobrescritura
+    }
     if (sv) sv.disabled = false;
     if (!r.ok) { showToast(r.detail || "No se pudo guardar", true); return; }
     tab.content = content;
+    tab.mtime = r.mtime || 0;
+    _clearDraft(tab);
     showToast("Guardado ✓ " + tab.name);
     _exitEdit();
     _renderViewer(tab);
@@ -1097,6 +1208,8 @@
     if (copy) copy.addEventListener("click", _viewerCopyAll);
     const reload = $("viewer-reload");
     if (reload) reload.addEventListener("click", _viewerReload);
+    const editArea = $("viewer-edit-area");
+    if (editArea) editArea.addEventListener("input", _onEditInput);
     const mdBtn = $("viewer-md-btn");
     if (mdBtn) mdBtn.addEventListener("click", _toggleMd);
     const fdec = $("viewer-font-dec");
@@ -1115,11 +1228,29 @@
     if (eb) eb.addEventListener("click", () => { if (_editing) _tryExitEdit(); else _enterEdit(); });
     const sv = $("viewer-save");
     if (sv) sv.addEventListener("click", _saveEdit);
-    // Atajos: Ctrl/Cmd+S guarda (en edición); Ctrl/Cmd+W cierra la pestaña activa.
+    // Buscar en archivo: input + navegación + cierre.
+    const fInput = $("viewer-find-input");
+    if (fInput) {
+      fInput.addEventListener("input", () => { _findIdx = 0; _runFind(); });
+      fInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); _findStep(e.shiftKey ? -1 : 1); }
+        else if (e.key === "Escape") { e.preventDefault(); _closeFind(); }
+      });
+    }
+    const fPrev = $("viewer-find-prev"); if (fPrev) fPrev.addEventListener("click", () => _findStep(-1));
+    const fNext = $("viewer-find-next"); if (fNext) fNext.addEventListener("click", () => _findStep(1));
+    const fX = $("viewer-find-x"); if (fX) fX.addEventListener("click", _closeFind);
+    // Atajos: Ctrl/Cmd+S guarda; Ctrl/Cmd+W cierra pestaña; Ctrl/Cmd+F busca.
     document.addEventListener("keydown", (e) => {
       const mod = e.ctrlKey || e.metaKey;
       if (mod && (e.key === "s" || e.key === "S")) {
         if (_editing) { e.preventDefault(); _saveEdit(); }
+        return;
+      }
+      if (mod && (e.key === "f" || e.key === "F")) {
+        // Solo secuestramos Ctrl+F con un archivo abierto y sin editar; si no, que
+        // funcione la búsqueda nativa del navegador.
+        if (_activeTab !== _TAB_TERM && !_editing) { e.preventDefault(); _openFind(); }
         return;
       }
       if (mod && (e.key === "w" || e.key === "W")) {
@@ -1242,6 +1373,8 @@
     if (acc) acc.disabled = false;
     if (!r.ok) { st.textContent = r.detail || "No se pudo guardar"; st.className = "ai-status err"; return; }
     tab.content = newContent;
+    tab.mtime = r.mtime || 0;
+    _clearDraft(tab);
     _aiPending = null;
     $("ai-preview").hidden = true;
     // refrescar la visualización con el cambio ya guardado
