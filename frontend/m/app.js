@@ -233,10 +233,6 @@
   }
   function sendCompose() {
     const ta = $("compose-input"); const txt = ta.value.trim();
-    // Enter cierra el dictado: el mensaje ya se envía, y el resultado "interino"
-    // del micro volvería a rellenar la caja si lo dejáramos activo. Para seguir
-    // dictando, se vuelve a tocar el micro.
-    if (listening) stopVoice();
     if (txt && ws && ws.readyState === WebSocket.OPEN) {
       ws.send(txt);
       // El Intro va aparte y con retardo: si llega pegado, la TUI no lo registra.
@@ -244,6 +240,15 @@
     }
     ta.value = ""; baseText = ""; vFinal = "";
     autoGrow();
+    // Con el micro activo, NO lo apagamos: reiniciamos la sesión de voz para
+    // empezar un mensaje nuevo en limpio. La frase en curso (anterior al Enter)
+    // se descarta porque su resultado "interino" rellenaría la caja si no.
+    // El onend (con listening=true) vuelve a arrancar el reconocedor solo.
+    if (listening) {
+      _restartVoice = true;
+      try { recog.stop(); } catch (_) {}
+      setTimeout(() => { _restartVoice = false; }, 1500);   // red de seguridad
+    }
   }
   function setupCompose() {
     const ta = $("compose-input");
@@ -263,15 +268,16 @@
   }
 
   // ---------- Voz (es-ES → rellena la barra de redacción) ----------
-  let recog = null, listening = false, baseText = "", vFinal = "";
+  let recog = null, listening = false, baseText = "", vFinal = "", _restartVoice = false;
   function setupVoice() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     const mic = $("mic-btn");
     if (!SR) { mic.disabled = true; mic.title = "Sin dictado en este navegador"; return; }
     if (!recog) {
       recog = new SR(); recog.lang = "es-ES"; recog.continuous = true; recog.interimResults = true;
+      recog.onstart = () => { _restartVoice = false; };   // nueva sesión lista
       recog.onresult = (ev) => {
-        if (!listening) return;   // micro apagado (p.ej. tras Enter): no repintar la caja
+        if (!listening || _restartVoice) return;   // micro apagado o reiniciando tras Enter: no repintar
         let interim = "";
         for (let i = ev.resultIndex; i < ev.results.length; i++) {
           const r = ev.results[i];
