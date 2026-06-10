@@ -869,13 +869,42 @@
   function _escapeHtml(s) {
     return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
-  // Formato en línea sobre texto YA escapado (negrita, cursiva, código, tachado, enlaces).
+  // Directorio base del .md en curso, para resolver rutas de imágenes relativas.
+  let _mdBaseDir = "/";
+  // Normaliza una ruta (resuelve "." y "..") sobre una base absoluta.
+  function _joinPath(base, rel) {
+    const parts = (base + "/" + rel).split("/");
+    const out = [];
+    for (const p of parts) {
+      if (!p || p === ".") continue;
+      if (p === "..") { out.pop(); continue; }
+      out.push(p);
+    }
+    return "/" + out.join("/");
+  }
+  // Resuelve la URL de una imagen Markdown a algo servible bajo la CSP (self/data:).
+  function _resolveMdImg(url) {
+    url = (url || "").trim();
+    if (/^\s*javascript:/i.test(url)) return "";
+    if (/^data:/i.test(url)) return url;                 // data URI: permitido por CSP
+    if (/^https?:\/\//i.test(url)) return url;           // externa: la CSP la bloqueará, pero no rompemos el render
+    const path = url.startsWith("/") ? url : _joinPath(_mdBaseDir, url);
+    return _fileURL(path);                               // bytes locales (mismo origen) → permitido
+  }
+  function _attr(s) { return String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;"); }
+  // Formato en línea sobre texto YA escapado (negrita, cursiva, código, tachado, imágenes, enlaces).
   function _mdInline(t) {
     t = t.replace(/`([^`]+)`/g, (m, c) => "<code>" + c + "</code>");
     t = t.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
     t = t.replace(/__([^_]+)__/g, "<strong>$1</strong>");
     t = t.replace(/(^|[^*])\*([^*\s][^*]*?)\*/g, "$1<em>$2</em>");
     t = t.replace(/~~([^~]+)~~/g, "<del>$1</del>");
+    // Imágenes ANTES que los enlaces (la sintaxis ![alt](url) contiene [alt](url)).
+    t = t.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (m, alt, url) => {
+      const src = _resolveMdImg(url);
+      if (!src) return alt;
+      return '<img class="md-img" src="' + _attr(src) + '" alt="' + alt.replace(/"/g, "&quot;") + '" loading="lazy">';
+    });
     t = t.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, txt, url) => {
       if (/^\s*javascript:/i.test(url)) return txt;   // sin esquemas peligrosos
       return '<a href="' + url + '" target="_blank" rel="noopener noreferrer">' + txt + "</a>";
@@ -883,7 +912,10 @@
     return t;
   }
   // Conversor de bloques: cabeceras, listas, citas, hr, fences y párrafos.
-  function _renderMarkdown(src) {
+  function _renderMarkdown(src, tab) {
+    // Directorio del archivo .md para resolver imágenes relativas (![](img.png)).
+    const p = tab && tab.path ? tab.path : "/";
+    _mdBaseDir = p.slice(0, p.lastIndexOf("/")) || "/";
     const fences = [];
     src = src.replace(/\r\n/g, "\n").replace(/```[ \t]*[\w-]*\n?([\s\S]*?)```/g, (m, c) => {
       fences.push(c.replace(/\n$/, ""));
@@ -938,7 +970,7 @@
     const isMd = _isMd(tab);
     if (btn) btn.hidden = !isMd;
     if (isMd && _mdRendered) {
-      if (md) { md.innerHTML = _renderMarkdown(tab.content); md.hidden = false; }
+      if (md) { md.innerHTML = _renderMarkdown(tab.content, tab); md.hidden = false; }
       if (pre) pre.hidden = true;
       if (btn) { btn.classList.add("active"); btn.textContent = "TXT"; btn.title = "Ver texto plano"; }
     } else {
@@ -1354,19 +1386,64 @@
   }
 
   // ---------- Modal/lightbox de imagen a pantalla completa ----------
-  function _openImgModal(url, alt) {
+  // Lightbox: estado de galería (lista de {url,name} e índice actual; null = imagen suelta).
+  let _lbList = null, _lbIdx = 0;
+  function _openImgModal(url, alt, list, idx) {
     const m = $("img-modal"), im = $("img-modal-el");
     if (!m || !im) return;
+    _lbList = (Array.isArray(list) && list.length > 1) ? list : null;
+    _lbIdx = _lbList ? (idx | 0) : 0;
     im.src = url; im.alt = alt || ""; m.classList.remove("zoomed"); m.hidden = false;
+    _updateLbNav();
   }
-  function _closeImgModal() { const m = $("img-modal"); if (m) { m.hidden = true; const im = $("img-modal-el"); if (im) im.src = ""; } }
+  function _closeImgModal() { const m = $("img-modal"); if (m) { m.hidden = true; const im = $("img-modal-el"); if (im) im.src = ""; } _lbList = null; }
+  function _updateLbNav() {
+    const has = !!_lbList;
+    const prev = $("img-modal-prev"), next = $("img-modal-next"), counter = $("img-modal-counter");
+    if (prev) prev.hidden = !has;
+    if (next) next.hidden = !has;
+    if (counter) { counter.hidden = !has; if (has) counter.textContent = (_lbIdx + 1) + " / " + _lbList.length; }
+  }
+  function _lbStep(delta) {
+    if (!_lbList) return;
+    _lbIdx = (_lbIdx + delta + _lbList.length) % _lbList.length;
+    const it = _lbList[_lbIdx], im = $("img-modal-el"), m = $("img-modal");
+    if (im) { im.src = it.url; im.alt = it.name || ""; }
+    if (m) m.classList.remove("zoomed");
+    _updateLbNav();
+  }
   function _setupImgModal() {
-    const m = $("img-modal"), im = $("img-modal-el"), close = $("img-modal-close"), viewerImg = $("viewer-img-el");
+    const m = $("img-modal"), im = $("img-modal-el"), close = $("img-modal-close"), viewerImg = $("viewer-img-el"), md = $("viewer-md");
     if (viewerImg) viewerImg.addEventListener("click", () => { const t = _viewerTabs.get(_activeTab); _openImgModal((t && t.url) || viewerImg.src, t && t.name); });
+    // Imágenes embebidas en un Markdown: clic → lightbox con galería del documento.
+    if (md) md.addEventListener("click", (e) => {
+      const img = e.target && e.target.closest ? e.target.closest("img") : null;
+      if (!img || !md.contains(img)) return;
+      const all = Array.from(md.querySelectorAll("img"));
+      const list = all.map((x) => ({ url: x.src, name: x.alt || "" }));
+      const idx = all.indexOf(img);
+      _openImgModal(img.src, img.alt, list, idx < 0 ? 0 : idx);
+    });
     if (im) im.addEventListener("click", (e) => { e.stopPropagation(); m.classList.toggle("zoomed"); });   // clic en la imagen: zoom 1:1 / ajustar
     if (m) m.addEventListener("click", _closeImgModal);   // clic en el fondo: cerrar
     if (close) close.addEventListener("click", (e) => { e.stopPropagation(); _closeImgModal(); });
-    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && m && !m.hidden) { e.preventDefault(); _closeImgModal(); } });
+    const prev = $("img-modal-prev"), next = $("img-modal-next");
+    if (prev) prev.addEventListener("click", (e) => { e.stopPropagation(); _lbStep(-1); });
+    if (next) next.addEventListener("click", (e) => { e.stopPropagation(); _lbStep(1); });
+    document.addEventListener("keydown", (e) => {
+      if (!m || m.hidden) return;
+      if (e.key === "Escape") { e.preventDefault(); _closeImgModal(); }
+      else if (e.key === "ArrowLeft") { e.preventDefault(); _lbStep(-1); }
+      else if (e.key === "ArrowRight") { e.preventDefault(); _lbStep(1); }
+    });
+  }
+  // Abre una imagen del explorador en el lightbox, con galería = imágenes de la carpeta.
+  function _openImgFromFolder(d, fullPath) {
+    const imgs = d.items.filter((x) => !x.dir && _isImageName(x.name))
+      .map((x) => { const fp = fsJoin(d.path, x.name); return { url: _fileURL(fp), name: x.name, path: fp }; });
+    let idx = imgs.findIndex((x) => x.path === fullPath);
+    if (idx < 0) idx = 0;
+    if (imgs.length) _openImgModal(imgs[idx].url, imgs[idx].name, imgs, idx);
   }
   function _refitPanes() { fsRefit(); T2.fit(); }
 
@@ -2138,6 +2215,7 @@
       const info = document.createElement("div"); info.className = "finfo";
       const name = document.createElement("span"); name.className = "fname"; name.textContent = it.name; name.title = it.name;
       if (it.dir) name.addEventListener("click", () => fsList(full));
+      else if (_isImageName(it.name)) { name.style.cursor = "zoom-in"; name.addEventListener("click", () => _openImgFromFolder(d, full)); }
       const meta = document.createElement("span"); meta.className = "fmeta";
       meta.textContent = (it.dir ? "carpeta · " : fsFmtSize(it.size) + " · ") + fsFmtDate(it.mtime);
       info.appendChild(name); info.appendChild(meta);
@@ -2146,8 +2224,11 @@
       ops.appendChild(fsOp(icon("pencil"), "Renombrar / mover", () => fsRename(full, it.name)));
       ops.appendChild(fsOp(icon("trash-2"), "Borrar", () => fsDelete(full, it.name, it.dir), "del"));
       row.appendChild(ico); row.appendChild(info); row.appendChild(ops);
-      // Doble clic sobre un archivo de texto → abrirlo en una pestaña del visor.
-      if (!it.dir) row.addEventListener("dblclick", () => viewerOpenPath(full, it.name, it.size));
+      // Doble clic: imagen → lightbox; texto → pestaña del visor.
+      if (!it.dir) row.addEventListener("dblclick", () => {
+        if (_isImageName(it.name)) _openImgFromFolder(d, full);
+        else viewerOpenPath(full, it.name, it.size);
+      });
       list.appendChild(row);
     });
   }

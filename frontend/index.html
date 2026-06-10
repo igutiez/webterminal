@@ -343,10 +343,13 @@
   <!-- Visor de imágenes a pantalla completa (clic en una imagen del visor) -->
   <div id="img-modal" class="img-modal" hidden>
     <img id="img-modal-el" alt="" />
+    <button id="img-modal-prev" class="img-modal-nav prev" title="Anterior (←)" hidden><svg class="ic"><use href="#ic-arrow-left"/></svg></button>
+    <button id="img-modal-next" class="img-modal-nav next" title="Siguiente (→)" hidden><svg class="ic"><use href="#ic-arrow-right"/></svg></button>
+    <span id="img-modal-counter" class="img-modal-counter" hidden></span>
     <button id="img-modal-close" class="img-modal-close" title="Cerrar (Esc)"><svg class="ic"><use href="#ic-x"/></svg></button>
   </div>
 
   <script src="highlight.min.js?v=1"></script>
-  <script src="app.js?v=55"></script>
+  <script src="app.js?v=56"></script>
 </body>
 </html>
