@@ -1125,9 +1125,27 @@
       panes.style.setProperty("--split", pct + "%");
       _refitPanes();
     };
-    div.addEventListener("mousedown", (e) => { dragging = true; div.classList.add("dragging"); document.body.style.userSelect = "none"; e.preventDefault(); });
+    const start = (e) => {
+      dragging = true;
+      div.classList.add("dragging"); panes.classList.add("dragging");
+      document.body.style.userSelect = "none"; document.body.style.cursor = "col-resize";
+      e.preventDefault();
+    };
+    const end = () => {
+      if (!dragging) return;
+      dragging = false;
+      div.classList.remove("dragging"); panes.classList.remove("dragging");
+      document.body.style.userSelect = ""; document.body.style.cursor = "";
+      _refitPanes();
+    };
+    // Ratón
+    div.addEventListener("mousedown", start);
     window.addEventListener("mousemove", (e) => { if (dragging) onMove(e.clientX); });
-    window.addEventListener("mouseup", () => { if (dragging) { dragging = false; div.classList.remove("dragging"); document.body.style.userSelect = ""; _refitPanes(); } });
+    window.addEventListener("mouseup", end);
+    // Táctil (tablet)
+    div.addEventListener("touchstart", start, { passive: false });
+    window.addEventListener("touchmove", (e) => { if (dragging && e.touches[0]) { onMove(e.touches[0].clientX); e.preventDefault(); } }, { passive: false });
+    window.addEventListener("touchend", end);
     window.addEventListener("resize", () => { if (_split) { _applyPanes(); _refitPanes(); } });
   }
 

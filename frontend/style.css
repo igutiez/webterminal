@@ -108,9 +108,19 @@ label.remember input { width: auto; margin: 0; accent-color: var(--accent); curs
 /* Vista dividida: dos huecos (terminal y/o archivo) con divisor arrastrable.
    El reparto va por POSICIÓN (no por identidad), porque los lados se intercambian:
    el primer hueco usa --split de ancho; el último, el resto. */
-#panes > .panes-divider { flex: 0 0 6px; cursor: col-resize; background: var(--border); z-index: 2; }
+#panes > .panes-divider { flex: 0 0 8px; cursor: col-resize; background: var(--border); z-index: 5; position: relative; }
 .panes-divider[hidden] { display: none !important; }
-#panes > .panes-divider:hover, .panes-divider.dragging { background: var(--accent); }
+/* Área de agarre más ancha (±5px) sin ocupar layout. */
+#panes > .panes-divider::after { content: ""; position: absolute; top: 0; bottom: 0; left: -5px; right: -5px; }
+/* Asa visible en el centro para que se vea que se puede arrastrar. */
+#panes > .panes-divider::before {
+  content: ""; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: 3px; height: 34px; border-radius: 3px; background: var(--muted);
+}
+#panes > .panes-divider:hover, #panes > .panes-divider.dragging { background: var(--accent); }
+#panes > .panes-divider:hover::before, #panes > .panes-divider.dragging::before { background: #08131a; }
+/* Al arrastrar, los paneles no capturan el ratón (la terminal no roba el drag). */
+#panes.dragging > #terminal-container, #panes.dragging > #terminal-container-2, #panes.dragging > #viewer { pointer-events: none; }
 #panes.split > *:first-child { flex: 0 0 var(--split, 50%); }
 /* Hueco con el foco: borde de acento (ahí se carga la siguiente pestaña). */
 #panes.split > .pane-focus { outline: 2px solid var(--accent); outline-offset: -2px; }
