@@ -768,6 +768,7 @@
     return i >= 0 ? (_RUN[(name).slice(i + 1).toLowerCase()] || null) : null;
   }
   function _shQuote(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'"; }
+  const _RUN_SESSION = "run";   // sesión tmux dedicada a ejecutar (shell limpio, NO la de Claude)
   async function _runFile() {
     const tab = _viewerTabs.get(_activeTab);
     if (!tab || tab.kind === "image") return;
@@ -781,12 +782,39 @@
       }
     }
     if (!ws || ws.readyState !== WebSocket.OPEN) { showToast("La terminal no está conectada", true); return; }
-    ws.send(cmd + " " + _shQuote(tab.path) + "\r");
-    // En pantalla completa (y si ya no estás editando), vuelve a la terminal para
-    // ver la salida; en split ya se ve. Si sigues editando, no te saco del editor.
-    if (!_splitActive() && !_editing && _activeTab !== _TAB_TERM) switchTab(_TAB_TERM);
-    try { term && term.focus(); } catch (_) {}
-    showToast("Ejecutando " + tab.name + " en la terminal");
+    const full = cmd + " " + _shQuote(tab.path) + "\r";
+
+    if (window.innerWidth >= 640) {
+      // Escritorio: ejecuta en una 2ª terminal LIMPIA (sesión "run") en el hueco de
+      // al lado, sin tocar tu sesión activa (que puede tener Claude corriendo).
+      _split = true;
+      let runSlot;
+      if (_slots.L.kind === "sec") { _slots.L.session = _RUN_SESSION; runSlot = "L"; }
+      else if (_slots.R.kind === "sec") { _slots.R.session = _RUN_SESSION; runSlot = "R"; }
+      else if (_slots.L.kind === "main") { _slots.R = { kind: "sec", session: _RUN_SESSION }; runSlot = "R"; }
+      else if (_slots.R.kind === "main") { _slots.L = { kind: "sec", session: _RUN_SESSION }; runSlot = "L"; }
+      else { _slots.L = { kind: "main" }; _slots.R = { kind: "sec", session: _RUN_SESSION }; runSlot = "R"; }
+      _focusPane = runSlot;
+      _applyPanes();          // conecta T2 a la sesión "run"
+      T2.send(full);          // se ejecuta cuando el shell esté listo (búfer si hace falta)
+      _updateTabsUI(); _refitPanes(); T2.focus();
+    } else {
+      // Móvil (sin sitio para dividir): cambia la terminal principal a la sesión
+      // "run" (tu sesión de Claude sigue viva en tmux) y ejecuta allí.
+      _setMainSession(_RUN_SESSION);
+      _activeTab = _TAB_TERM; _ensureTerminalVisible();
+      _sendToPrimaryWhenOpen(full);
+      try { term && term.focus(); } catch (_) {}
+    }
+    showToast("Ejecutando " + tab.name + " en una terminal nueva");
+  }
+  // Manda un comando a la terminal principal en cuanto la conexión esté abierta
+  // (tras un cambio de sesión/reconexión). Reintenta un rato y se rinde.
+  function _sendToPrimaryWhenOpen(data, tries) {
+    tries = tries || 0;
+    if (ws && ws.readyState === WebSocket.OPEN) { setTimeout(() => { try { ws.send(data); } catch (_) {} }, 400); return; }
+    if (tries > 40) return;
+    setTimeout(() => _sendToPrimaryWhenOpen(data, tries + 1), 150);
   }
   function _escapeHtml(s) {
     return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -993,7 +1021,7 @@
   // NO toca fsid, lista de sesiones ni estado global: solo conecta a una sesión
   // tmux, pinta, teclea y se redimensiona. Conexión perezosa; se cierra al salir.
   const T2 = (function () {
-    let t = null, fit = null, ws2 = null, sess = null, recon = 0, rTimer = null, closed = true;
+    let t = null, fit = null, ws2 = null, sess = null, recon = 0, rTimer = null, closed = true, pending = "";
     function ensure() {
       if (t) return;
       t = new Terminal({
@@ -1014,7 +1042,13 @@
       const proto = location.protocol === "https:" ? "wss" : "ws";
       ws2 = new WebSocket(`${proto}://${location.host}/ws?token=${encodeURIComponent(jwt)}`);
       ws2.binaryType = "arraybuffer";
-      ws2.onopen = () => { recon = 0; ws2.send(JSON.stringify({ ssh_user: sshUser, password: sshPassword, session: sess || undefined })); fitNow(); t.focus(); };
+      ws2.onopen = () => {
+        recon = 0;
+        ws2.send(JSON.stringify({ ssh_user: sshUser, password: sshPassword, session: sess || undefined }));
+        fitNow(); t.focus();
+        // Comando en cola (p.ej. ejecutar un archivo): se manda cuando el shell ya está.
+        if (pending) { const p = pending; pending = ""; setTimeout(() => { if (ws2 && ws2.readyState === WebSocket.OPEN) ws2.send(p); }, 500); }
+      };
       ws2.onmessage = (ev) => {
         if (ev.data instanceof ArrayBuffer) { t.write(new Uint8Array(ev.data)); return; }
         if (ev.data && ev.data[0] === "{") { try { const m = JSON.parse(ev.data); if (m && (m.type === "tmux-sessions" || m.type === "fsid")) return; } catch (_) {} }
@@ -1044,7 +1078,9 @@
       sessionLabel() { return sess === null ? "principal" : sess; },
       fit: fitNow,
       focus() { if (t) t.focus(); },
-      close() { closed = true; clearTimeout(rTimer); if (ws2) { try { ws2.onclose = null; ws2.close(); } catch (_) {} ws2 = null; } sess = null; },
+      // Manda datos al PTY de la 2ª terminal; si aún no está abierta, los encola.
+      send(data) { if (ws2 && ws2.readyState === WebSocket.OPEN) ws2.send(data); else pending += data; },
+      close() { closed = true; clearTimeout(rTimer); pending = ""; if (ws2) { try { ws2.onclose = null; ws2.close(); } catch (_) {} ws2 = null; } sess = null; },
     };
   })();
 
@@ -1180,6 +1216,7 @@
         if (!_splitActive()) return;
         _focusPane = (_slotEl(_slots.L) === el) ? "L" : "R";
         _applyFocusOutline();
+        _updateTabsUI();   // recolorea la pestaña azul del hueco enfocado
       }, true);
     });
   }
@@ -1227,18 +1264,36 @@
   // Mismo aspecto en todos los navegadores/SO (no son emojis del sistema).
   function icon(name) { return '<svg class="ic"><use href="#ic-' + name + '"/></svg>'; }
 
+  // Qué pestaña marcar según el hueco con FOCO (azul fuerte) y el otro hueco
+  // visible en split (azul tenue). Devuelve {main, secLabel, fileId}.
+  function _slotTabInfo(desc) {
+    if (!desc) return {};
+    if (desc.kind === "viewer") return { fileId: _lastViewerId };
+    if (desc.kind === "sec") return { secLabel: desc.session };
+    return { main: true };
+  }
   function _updateTabsUI() {
     const bar = $("tabs"); if (!bar) return;
     // Limpia y vuelve a pintar (pocas pestañas, es barato y robusto).
     bar.innerHTML = "";
-    const onTerm = _activeTab === _TAB_TERM;
+    // Estado de foco para colorear pestañas.
+    let fMain = false, fSec = null, fFile = null, sMain = false, sSec = null, sFile = null;
+    if (_splitActive()) {
+      const f = _slotTabInfo(_slots[_focusPane]), o = _slotTabInfo(_slots[_otherSlot(_focusPane)]);
+      fMain = !!f.main; fSec = f.secLabel || null; fFile = f.fileId || null;
+      sMain = !!o.main; sSec = o.secLabel || null; sFile = o.fileId || null;
+    } else if (_activeTab === _TAB_TERM) { fMain = true; }
+    else { fFile = _activeTab; }
+    const sessCls = (s) => (fMain && s.current) || (fSec && s.label === fSec) ? " tab-active"
+      : (sMain && s.current) || (sSec && s.label === sSec) ? " tab-shown" : "";
+    const fileCls = (id) => fFile === id ? " tab-active" : sFile === id ? " tab-shown" : "";
 
     // --- una pestaña por SESIÓN tmux (fallback: la actual mientras llega la lista) ---
     const sessions = _sessions.length ? _sessions
       : [{ label: currentSession || "principal", current: true }];
     sessions.forEach((s) => {
       const el = document.createElement("div");
-      el.className = "tab" + (onTerm && s.current ? " tab-active" : "");
+      el.className = "tab" + sessCls(s);
       el.dataset.tab = "term:" + s.label;
       el.title = "Sesión tmux: " + s.label + (s.current ? " (actual)" : "");
       el.innerHTML = '<span class="tab-ico">' + icon("terminal") + '</span><span class="tab-name"></span>';
@@ -1266,7 +1321,7 @@
     // --- pestañas de VISORES de archivos ---
     _viewerTabs.forEach((t) => {
       const el = document.createElement("div");
-      el.className = "tab" + (_activeTab === t.id ? " tab-active" : "");
+      el.className = "tab" + fileCls(t.id);
       el.dataset.tab = t.id;
       el.title = t.path;
       el.innerHTML =

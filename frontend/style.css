@@ -376,7 +376,9 @@ body.files-open .files-side { display: flex; }
   white-space: nowrap; transition: background .12s, color .12s;
 }
 .tab:hover { background: var(--panel); color: var(--text); }
-.tab.tab-active { background: var(--panel); color: var(--text); border-bottom: 2px solid var(--accent); margin-bottom: -1px; }
+/* Pestaña del hueco ENFOCADO: azul. La del otro hueco visible en split: azul tenue. */
+.tab.tab-active { background: rgba(79,195,247,.16); color: var(--accent); border-bottom: 2px solid var(--accent); margin-bottom: -1px; }
+.tab.tab-shown { background: rgba(79,195,247,.06); border-bottom: 2px solid rgba(79,195,247,.4); margin-bottom: -1px; }
 .tab .tab-ico { flex: 0 0 auto; font-size: 13px; line-height: 1; }
 .tab .tab-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .tab .tab-close {
