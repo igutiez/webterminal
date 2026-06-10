@@ -766,7 +766,7 @@
     // fraccionario: si no, textarea y <pre> redondean distinto y el cursor se desvía.
     const epx = Math.round(_viewerFont) + "px";
     const lh = Math.round(Math.round(_viewerFont) * 1.55) + "px";
-    ["viewer-edit-area", "viewer-edit-hl", "viewer-edit-code"].forEach((id) => {
+    ["viewer-edit-area", "viewer-edit-hl"].forEach((id) => {
       const el = $(id); if (el) { el.style.fontSize = epx; el.style.lineHeight = lh; }
     });
     // La vista Markdown es prosa, no monoespaciada: le damos un punto más para que respire.
@@ -1026,17 +1026,17 @@
   // ---------- Editor con resaltado en vivo + sangría inteligente (PEP8 en .py) ----------
   // Pinta el contenido del textarea en la capa coloreada de detrás.
   function _syncEditorHL() {
-    const ta = $("viewer-edit-area"), code = $("viewer-edit-code");
-    if (!ta || !code) return;
+    const ta = $("viewer-edit-area"), pre = $("viewer-edit-hl");
+    if (!ta || !pre) return;
     const tab = _viewerTabs.get(_editTabId);
     const lang = tab ? _hljsLang(tab.name) : null;
     let val = ta.value;
     if (val.endsWith("\n")) val += " ";   // evita que la última línea descuadre el alto
     if (typeof hljs !== "undefined" && lang && hljs.getLanguage(lang) && val.length < 300000) {
-      try { code.className = "hljs"; code.innerHTML = hljs.highlight(val, { language: lang, ignoreIllegals: true }).value; return; }
+      try { pre.className = "viewer-edit-hl hljs"; pre.innerHTML = hljs.highlight(val, { language: lang, ignoreIllegals: true }).value; return; }
       catch (_) {}
     }
-    code.className = ""; code.textContent = val;
+    pre.className = "viewer-edit-hl"; pre.textContent = val;
   }
   function _syncEditorScroll() {
     const ta = $("viewer-edit-area"), hl = $("viewer-edit-hl");
@@ -1287,6 +1287,22 @@
   }
   function _ensureTerminalVisible() { _applyPanes(); }
   function _ensureViewerVisible() { _applyPanes(); }
+
+  // ---------- Modal/lightbox de imagen a pantalla completa ----------
+  function _openImgModal(url, alt) {
+    const m = $("img-modal"), im = $("img-modal-el");
+    if (!m || !im) return;
+    im.src = url; im.alt = alt || ""; m.classList.remove("zoomed"); m.hidden = false;
+  }
+  function _closeImgModal() { const m = $("img-modal"); if (m) { m.hidden = true; const im = $("img-modal-el"); if (im) im.src = ""; } }
+  function _setupImgModal() {
+    const m = $("img-modal"), im = $("img-modal-el"), close = $("img-modal-close"), viewerImg = $("viewer-img-el");
+    if (viewerImg) viewerImg.addEventListener("click", () => { const t = _viewerTabs.get(_activeTab); _openImgModal((t && t.url) || viewerImg.src, t && t.name); });
+    if (im) im.addEventListener("click", (e) => { e.stopPropagation(); m.classList.toggle("zoomed"); });   // clic en la imagen: zoom 1:1 / ajustar
+    if (m) m.addEventListener("click", _closeImgModal);   // clic en el fondo: cerrar
+    if (close) close.addEventListener("click", (e) => { e.stopPropagation(); _closeImgModal(); });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && m && !m.hidden) { e.preventDefault(); _closeImgModal(); } });
+  }
   function _refitPanes() { fsRefit(); T2.fit(); }
 
   // Carga una SESIÓN tmux en el hueco enfocado (elige motor main/sec).
@@ -1737,6 +1753,7 @@
     if (splitBtn) splitBtn.addEventListener("click", _toggleSplit);
     _setupSplitDrag();
     _setupPaneFocus();
+    _setupImgModal();
     const editArea = $("viewer-edit-area");
     if (editArea) {
       editArea.addEventListener("input", () => { _onEditInput(); _syncEditorHL(); _syncEditorScroll(); });

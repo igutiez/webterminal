@@ -26,7 +26,7 @@
   <script src="https://unpkg.com/xterm-addon-canvas@0.5.0/lib/xterm-addon-canvas.js"></script>
 
   <link rel="stylesheet" href="hljs-dracula.css?v=1" />
-  <link rel="stylesheet" href="style.css?v=46" />
+  <link rel="stylesheet" href="style.css?v=47" />
 </head>
 <body>
   <!-- Sprite de iconos SVG (local, mismo aspecto en Safari/Chrome/iOS/Android). Lucide, ISC. -->
@@ -231,7 +231,7 @@
             <div id="viewer-md" class="viewer-md" hidden></div>
             <div id="viewer-img" class="viewer-img" hidden><img id="viewer-img-el" alt="" /></div>
             <div id="viewer-edit-wrap" class="viewer-edit-wrap" hidden>
-              <pre id="viewer-edit-hl" class="viewer-edit-hl" aria-hidden="true"><code id="viewer-edit-code"></code></pre>
+              <pre id="viewer-edit-hl" class="viewer-edit-hl" aria-hidden="true"></pre>
               <textarea id="viewer-edit-area" class="viewer-edit-area" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" wrap="off"></textarea>
             </div>
           </div>
@@ -335,7 +335,13 @@
     </div>
   </div>
 
+  <!-- Visor de imágenes a pantalla completa (clic en una imagen del visor) -->
+  <div id="img-modal" class="img-modal" hidden>
+    <img id="img-modal-el" alt="" />
+    <button id="img-modal-close" class="img-modal-close" title="Cerrar (Esc)"><svg class="ic"><use href="#ic-x"/></svg></button>
+  </div>
+
   <script src="highlight.min.js?v=1"></script>
-  <script src="app.js?v=51"></script>
+  <script src="app.js?v=53"></script>
 </body>
 </html>
