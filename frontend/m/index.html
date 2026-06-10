@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>MessorTerminal · móvil</title>
+  <meta name="theme-color" content="#0d0d1a" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="MessorTerminal" />
+  <link rel="apple-touch-icon" href="/icon-192.png" />
+  <link rel="manifest" href="/m/manifest.webmanifest" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+  <link href="https://unpkg.com/xterm@5.3.0/css/xterm.css" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css?v=1" />
+  <script src="https://unpkg.com/xterm@5.3.0/lib/xterm.js"></script>
+  <script src="https://unpkg.com/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+</head>
+<body>
+  <!-- Sprite SVG (subconjunto de lucide-static, ISC) -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="ic-terminal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19h8" /><path d="m4 17 6-6-6-6" /></symbol>
+    <symbol id="ic-folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" /></symbol>
+    <symbol id="ic-file-text" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z" /><path d="M14 2v5a1 1 0 0 0 1 1h5" /><path d="M10 9H8" /><path d="M16 13H8" /><path d="M16 17H8" /></symbol>
+    <symbol id="ic-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></symbol>
+    <symbol id="ic-arrow-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 19-7-7 7-7" /><path d="M19 12H5" /></symbol>
+    <symbol id="ic-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3" /><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="m7 10 5 5 5-5" /></symbol>
+    <symbol id="ic-upload" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12" /><path d="m17 8-5-5-5 5" /><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /></symbol>
+    <symbol id="ic-mic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19v3" /><path d="M19 10v2a7 7 0 0 1-14 0v-2" /><rect x="9" y="2" width="6" height="13" rx="3" /></symbol>
+    <symbol id="ic-send" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 4v7a4 4 0 0 1-4 4H4" /><path d="m9 10-5 5 5 5" /></symbol>
+    <symbol id="ic-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14" /><path d="M12 5v14" /></symbol>
+    <symbol id="ic-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></symbol>
+  </svg>
+
+  <!-- ===== LOGIN ===== -->
+  <section id="login-screen" class="screen card-screen" hidden>
+    <form id="login-form" class="card">
+      <h1>MessorTerminal</h1>
+      <p class="sub">Entra con tu cuenta</p>
+      <input id="login-email" type="email" placeholder="email" autocomplete="username" required />
+      <input id="login-password" type="password" placeholder="contraseña" autocomplete="current-password" required />
+      <label class="chk"><input id="login-remember" type="checkbox" /> Recordar en este móvil</label>
+      <button type="submit" class="btn primary">Entrar</button>
+      <div id="login-error" class="err"></div>
+      <a href="/" id="link-desktop" class="link-sm">Versión de escritorio</a>
+    </form>
+  </section>
+
+  <!-- ===== SSH ===== -->
+  <section id="ssh-screen" class="screen card-screen" hidden>
+    <form id="ssh-form" class="card">
+      <h1>Conectar</h1>
+      <p class="sub">Tu usuario del servidor</p>
+      <input id="ssh-user" type="text" placeholder="usuario" autocomplete="username" autocapitalize="off" required />
+      <input id="ssh-password" type="password" placeholder="contraseña" autocomplete="current-password" required />
+      <label class="chk"><input id="ssh-remember" type="checkbox" /> Recordar en este móvil</label>
+      <button type="submit" class="btn primary">Abrir terminal</button>
+      <button type="button" id="ssh-claude" class="btn">Abrir + Claude</button>
+      <div id="ssh-error" class="err"></div>
+      <div class="row-links">
+        <a href="#" id="link-logout" class="link-sm">Salir</a>
+        <a href="/" id="link-desktop2" class="link-sm">Escritorio</a>
+      </div>
+    </form>
+  </section>
+
+  <!-- ===== APP (terminal) ===== -->
+  <section id="app-screen" class="screen" hidden>
+    <header id="topbar">
+      <span id="status-dot" class="dot dot-red"></span>
+      <button id="session-pill" class="pill"><span id="session-name">principal</span><svg class="ic sm"><use href="#ic-chevron"/></svg></button>
+      <span class="spacer"></span>
+      <button id="files-btn" class="tbtn" title="Archivos"><svg class="ic"><use href="#ic-folder"/></svg></button>
+    </header>
+
+    <div id="term" class="term"></div>
+
+    <div id="keybar" class="keybar"></div>
+
+    <div id="compose">
+      <textarea id="compose-input" rows="1" placeholder="Escribe o dicta…" autocapitalize="sentences" autocomplete="off" autocorrect="on" spellcheck="true"></textarea>
+      <button id="mic-btn" class="cbtn" title="Dictar"><svg class="ic"><use href="#ic-mic"/></svg></button>
+      <button id="send-btn" class="cbtn primary" title="Enviar"><svg class="ic"><use href="#ic-send"/></svg></button>
+    </div>
+  </section>
+
+  <!-- ===== HOJA: SESIONES ===== -->
+  <div id="sheet-sessions" class="sheet" hidden>
+    <div class="sheet-card">
+      <div class="sheet-head"><span>Sesiones</span><button id="sessions-close" class="tbtn"><svg class="ic"><use href="#ic-x"/></svg></button></div>
+      <div id="sessions-list" class="sheet-list"></div>
+      <button id="session-new" class="btn"><svg class="ic"><use href="#ic-plus"/></svg> Nueva sesión</button>
+    </div>
+  </div>
+
+  <!-- ===== HOJA: ARCHIVOS ===== -->
+  <div id="sheet-files" class="sheet full" hidden>
+    <div class="sheet-card full">
+      <div class="sheet-head">
+        <span>Archivos</span>
+        <span class="spacer"></span>
+        <button id="files-up" class="tbtn" title="Subir foto/archivo aquí"><svg class="ic"><use href="#ic-upload"/></svg></button>
+        <button id="files-close" class="tbtn"><svg class="ic"><use href="#ic-x"/></svg></button>
+      </div>
+      <div id="files-crumbs" class="crumbs"></div>
+      <div id="files-list" class="files-list"></div>
+      <div id="files-status" class="files-status"></div>
+      <!-- visor de archivo (lectura) -->
+      <div id="file-view" class="file-view" hidden>
+        <div class="fv-head">
+          <button id="fv-back" class="tbtn"><svg class="ic"><use href="#ic-arrow-left"/></svg></button>
+          <span id="fv-name" class="fv-name"></span>
+          <span class="spacer"></span>
+          <button id="fv-download" class="tbtn" title="Descargar"><svg class="ic"><use href="#ic-download"/></svg></button>
+        </div>
+        <pre id="fv-pre" class="fv-pre" hidden></pre>
+        <div id="fv-img" class="fv-img" hidden><img id="fv-img-el" alt="" /></div>
+      </div>
+    </div>
+  </div>
+
+  <input id="files-input" type="file" accept="image/*" hidden />
+  <div id="toast" class="toast"></div>
+  <script src="app.js?v=1"></script>
+</body>
+</html>
