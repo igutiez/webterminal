@@ -698,6 +698,25 @@
   const _viewerTabs = new Map();        // id -> { id, name, path, content, dirty }
   let _editing = false;                 // ¿el visor está en modo edición?
   let _editTabId = null;                // id de la pestaña que se está editando
+  let _tabsRestored = false;            // ¿ya reabrimos las pestañas de la sesión anterior?
+
+  // Persistir/restaurar las pestañas de archivos abiertos entre RECARGAS de página
+  // (las sesiones tmux vuelven solas; los archivos abiertos viven solo en memoria).
+  function _persistOpenTabs() {
+    try {
+      const arr = [];
+      _viewerTabs.forEach((t) => arr.push({ path: t.path, name: t.name }));
+      localStorage.setItem("wt_open_tabs", JSON.stringify(arr));
+    } catch (_) {}
+  }
+  function _restoreOpenTabs() {
+    if (_tabsRestored) return;     // solo en la 1ª conexión tras cargar la página
+    _tabsRestored = true;
+    let arr = [];
+    try { arr = JSON.parse(localStorage.getItem("wt_open_tabs") || "[]"); } catch (_) {}
+    if (!Array.isArray(arr)) return;
+    arr.forEach((it) => { if (it && it.path) viewerOpenPath(it.path, it.name || it.path.split("/").pop(), 0); });
+  }
 
   // Subconjunto "humano" de extensiones que tratamos como texto. Coincide con
   // el allowlist del backend (que es más exhaustivo y autoritativo): esto es
@@ -1349,6 +1368,7 @@
       });
       bar.appendChild(el);
     });
+    _persistOpenTabs();   // recuerda los archivos abiertos para reabrirlos tras recargar
   }
 
   function switchTab(id) {
@@ -2103,7 +2123,7 @@
           try {
             const m = JSON.parse(ev.data);
             if (m && m.type === "tmux-sessions") { renderSessions(m.sessions || []); return; }
-            if (m && m.type === "fsid") { fsid = m.fsid; requestSessions(); return; }
+            if (m && m.type === "fsid") { fsid = m.fsid; requestSessions(); _restoreOpenTabs(); return; }
           } catch (_) {}
         }
         term.write(ev.data);
