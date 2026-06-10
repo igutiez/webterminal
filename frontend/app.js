@@ -761,11 +761,13 @@
   function _applyViewerFont() {
     const px = _viewerFont + "px";
     const pre = $("viewer-pre"); if (pre) pre.style.fontSize = px;
-    // Editor: misma fuente Y line-height EN PÍXELES ENTEROS en el textarea y la capa
-    // coloreada, para que cada línea quede a la misma altura y el cursor coincida.
-    const lh = Math.round(_viewerFont * 1.55) + "px";
+    // Editor: tamaño de fuente y line-height EN PÍXELES ENTEROS en el textarea y la
+    // capa coloreada. Tamaño entero (no 12,5) para que el ancho de carácter no sea
+    // fraccionario: si no, textarea y <pre> redondean distinto y el cursor se desvía.
+    const epx = Math.round(_viewerFont) + "px";
+    const lh = Math.round(Math.round(_viewerFont) * 1.55) + "px";
     ["viewer-edit-area", "viewer-edit-hl", "viewer-edit-code"].forEach((id) => {
-      const el = $(id); if (el) { el.style.fontSize = px; el.style.lineHeight = lh; }
+      const el = $(id); if (el) { el.style.fontSize = epx; el.style.lineHeight = lh; }
     });
     // La vista Markdown es prosa, no monoespaciada: le damos un punto más para que respire.
     const md = $("viewer-md"); if (md) md.style.fontSize = (_viewerFont + 1) + "px";
