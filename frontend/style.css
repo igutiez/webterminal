@@ -105,13 +105,15 @@ label.remember input { width: auto; margin: 0; accent-color: var(--accent); curs
 #panes { flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; position: relative; }
 #panes > * { flex: 1 1 auto; min-width: 0; min-height: 0; }
 
-/* Vista dividida: terminal (izquierda) + visor (derecha) a la vez, con divisor
-   arrastrable. El ancho izquierdo lo guarda --split (lo mueve el arrastre en JS). */
+/* Vista dividida: dos huecos (terminal y/o archivo) con divisor arrastrable.
+   El reparto va por POSICIÓN (no por identidad), porque los lados se intercambian:
+   el primer hueco usa --split de ancho; el último, el resto. */
 #panes > .panes-divider { flex: 0 0 6px; cursor: col-resize; background: var(--border); z-index: 2; }
 .panes-divider[hidden] { display: none !important; }
 #panes > .panes-divider:hover, .panes-divider.dragging { background: var(--accent); }
-#panes.split > #terminal-container { flex: 0 0 var(--split, 50%); }
-#panes.split > #viewer { flex: 1 1 auto; }
+#panes.split > *:first-child { flex: 0 0 var(--split, 50%); }
+/* Hueco con el foco: borde de acento (ahí se carga la siguiente pestaña). */
+#panes.split > .pane-focus { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 #terminal-container {
   flex: 1 1 auto; min-height: 0; min-width: 0; width: auto; position: relative;

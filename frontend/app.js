@@ -653,6 +653,7 @@
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "tmux-list" }));
   }
   function switchSession(label) {
+    _routeTermToFocus();   // en split, la terminal va al hueco enfocado
     currentSession = (label === "principal") ? null : label;
     _markCurrent(label);
     _activeTab = _TAB_TERM;
@@ -926,15 +927,38 @@
     return (n / (1024 * 1024)).toFixed(1) + " MB";
   }
 
-  // ---------- Vista dividida (terminal + archivo a la vez) ----------
+  // ---------- Vista dividida (dos huecos: terminal y/o archivo a la vez) ----------
+  // Modelo genérico: dos huecos (izquierda/derecha). Uno tiene el FOCO (borde
+  // resaltado); al pulsar una pestaña, su contenido se carga en el hueco enfocado.
+  // _termSide = lado que ocupa la terminal (el visor ocupa el otro).
   let _split = false, _lastViewerId = null;
+  let _termSide = "left", _focusPane = "left";
   try { if (localStorage.getItem("wt_split") === "1") _split = true; } catch (_) {}
-  // Decide qué paneles se ven según la pestaña activa y si el split está activo.
-  // Split solo tiene sentido con al menos un archivo abierto.
+  try { const ts = localStorage.getItem("wt_termside"); if (ts === "left" || ts === "right") _termSide = ts; } catch (_) {}
+  function _splitActive() { return _split && _viewerTabs.size > 0 && window.innerWidth >= 640; }
+  function _viewerSide() { return _termSide === "left" ? "right" : "left"; }
+  function _persistTermSide() { try { localStorage.setItem("wt_termside", _termSide); } catch (_) {} }
+  // Orden del DOM = orden visual (la terminal a su lado, el visor al otro).
+  function _layoutPanes() {
+    const panes = $("panes"), tc = $("terminal-container"), v = $("viewer"), div = $("panes-divider");
+    if (!panes || !tc || !v || !div) return;
+    if (_termSide === "right") panes.append(v, div, tc); else panes.append(tc, div, v);
+  }
+  // Resalta el hueco enfocado (donde se cargará la próxima pestaña que pulses).
+  function _applyFocusOutline() {
+    const tc = $("terminal-container"), v = $("viewer"), split = _splitActive();
+    if (tc) tc.classList.toggle("pane-focus", split && _focusPane === _termSide);
+    if (v) v.classList.toggle("pane-focus", split && _focusPane === _viewerSide());
+  }
+  function _setFocusPane(side) { _focusPane = side; _applyFocusOutline(); }
+  // En split, decide dónde va el contenido pulsado según el hueco enfocado.
+  function _routeTermToFocus() { if (_splitActive()) { _termSide = _focusPane; _persistTermSide(); } }
+  function _routeViewerToFocus() { if (_splitActive()) { _termSide = (_focusPane === "left") ? "right" : "left"; _persistTermSide(); } }
+
   function _applyPanes() {
     const tc = $("terminal-container"), v = $("viewer"), panes = $("panes"), div = $("panes-divider");
     const hasViewer = _viewerTabs.size > 0;
-    const split = _split && hasViewer && window.innerWidth >= 640;   // en móvil no se divide
+    const split = _splitActive();
     const onTerm = _activeTab === _TAB_TERM;
     if (panes) panes.classList.toggle("split", split);
     if (div) div.hidden = !split;
@@ -942,12 +966,18 @@
     if (split) {
       if (tc) tc.style.display = "";
       if (v) v.hidden = false;
-    } else if (onTerm || !hasViewer) {
-      if (tc) tc.style.display = "";
-      if (v) v.hidden = true;
+      _layoutPanes();
+      _applyFocusOutline();
     } else {
-      if (tc) tc.style.display = "none";
-      if (v) v.hidden = false;
+      if (tc) tc.classList.remove("pane-focus");
+      if (v) v.classList.remove("pane-focus");
+      if (onTerm || !hasViewer) {
+        if (tc) tc.style.display = "";
+        if (v) v.hidden = true;
+      } else {
+        if (tc) tc.style.display = "none";
+        if (v) v.hidden = false;
+      }
     }
   }
   function _ensureTerminalVisible() { _applyPanes(); }
@@ -956,11 +986,21 @@
     if (_viewerTabs.size === 0) { showToast("Abre un archivo para usar la vista dividida.", true); return; }
     _split = !_split;
     try { localStorage.setItem("wt_split", _split ? "1" : "0"); } catch (_) {}
-    _applyPanes();
-    // En split, el panel derecho debe mostrar un archivo aunque la pestaña activa
-    // sea la terminal: usamos el último visor activo.
-    if (_split) { const lv = _viewerTabs.get(_lastViewerId) || _viewerTabs.values().next().value; if (lv) _renderViewer(lv); }
+    if (_split) {
+      _focusPane = _viewerSide();   // al activar, foco en el lado del archivo
+      const lv = _viewerTabs.get(_lastViewerId) || _viewerTabs.values().next().value;
+      _applyPanes();
+      if (lv) _renderViewer(lv);
+    } else {
+      _applyPanes();
+    }
     fsRefit();
+  }
+  // Clic en un hueco = enfocarlo (ahí irá la siguiente pestaña que pulses).
+  function _setupPaneFocus() {
+    const tc = $("terminal-container"), v = $("viewer");
+    if (tc) tc.addEventListener("mousedown", () => { if (_splitActive()) _setFocusPane(_termSide); }, true);
+    if (v) v.addEventListener("mousedown", () => { if (_splitActive()) _setFocusPane(_viewerSide()); }, true);
   }
   function _setupSplitDrag() {
     const div = $("panes-divider"), panes = $("panes");
@@ -1047,6 +1087,8 @@
     if (id !== _TAB_TERM && !_viewerTabs.has(id)) return;
     if (!_tryExitEdit()) return;   // cambios sin guardar → confirmar antes de salir
     if (_findActive) _resetFind();
+    // En split, la pestaña pulsada se carga en el hueco enfocado.
+    if (_splitActive()) { if (id === _TAB_TERM) _routeTermToFocus(); else _routeViewerToFocus(); }
     _activeTab = id;
     if (id === _TAB_TERM) {
       _ensureTerminalVisible();
@@ -1058,6 +1100,7 @@
     } else {
       _ensureViewerVisible();
       _renderViewer(_viewerTabs.get(id));
+      if (_splitActive()) fsRefit();   // la terminal pudo cambiar de lado/tamaño
     }
     _updateTabsUI();
   }
@@ -1298,6 +1341,7 @@
     const splitBtn = $("split-btn");
     if (splitBtn) splitBtn.addEventListener("click", _toggleSplit);
     _setupSplitDrag();
+    _setupPaneFocus();
     const editArea = $("viewer-edit-area");
     if (editArea) editArea.addEventListener("input", _onEditInput);
     const mdBtn = $("viewer-md-btn");
