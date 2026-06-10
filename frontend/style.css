@@ -80,6 +80,13 @@ html, body {
 }
 #topbar button:hover { border-color: var(--accent); color: var(--accent); }
 
+/* Iconos SVG del sprite local (#icon-sprite). Heredan el color del botón
+   (stroke=currentColor) y escalan con su font-size. pointer-events:none para
+   que el clic lo reciba el botón, no el <svg> (la delegación usa closest()). */
+.ic { width: 1.2em; height: 1.2em; display: inline-block; vertical-align: -0.16em; flex: 0 0 auto; pointer-events: none; }
+/* Centrado fino del icono dentro de los botones (vale también para los de texto). */
+#topbar button, .fbtn, .vbtn, .fop, .tab .tab-close, .kb-tmux, .ai-x { display: inline-flex; align-items: center; justify-content: center; gap: 4px; }
+
 label.remember {
   display: flex; align-items: center; gap: 8px; margin: 2px 0 4px;
   font-size: 13px; color: var(--muted); cursor: pointer; user-select: none;
@@ -172,7 +179,8 @@ label.remember input { width: auto; margin: 0; accent-color: var(--accent); curs
   background: rgba(79,195,247,.12); border: 2px solid var(--accent);
   animation: voicepulse 1.4s infinite;
 }
-.voice-mic-icon { font-size: 56px; line-height: 1; }
+.voice-mic-icon { font-size: 56px; line-height: 1; color: var(--accent); }
+.voice-mic-icon .ic { width: 56px; height: 56px; vertical-align: middle; }
 @keyframes voicepulse {
   0%,100% { box-shadow: 0 0 0 0 rgba(79,195,247,.45); }
   50%     { box-shadow: 0 0 0 26px rgba(79,195,247,0); }
@@ -281,7 +289,8 @@ body.files-open .files-side { display: flex; }
   display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 7px; cursor: default;
 }
 .frow:hover { background: var(--panel-2); }
-.frow .ico { flex: 0 0 auto; width: 20px; text-align: center; font-size: 15px; }
+.frow .ico { flex: 0 0 auto; width: 20px; display: inline-flex; align-items: center; justify-content: center; font-size: 15px; color: var(--muted); }
+.frow.isdir .ico { color: var(--accent); }
 .finfo { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
 .frow .fname { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .frow.isdir .fname { color: var(--accent); cursor: pointer; font-weight: 500; }

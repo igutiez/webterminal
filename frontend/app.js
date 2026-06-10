@@ -241,7 +241,7 @@
       const p = d.path;
       const arg = /\s/.test(p) ? "'" + p.replace(/'/g, "'\\''") + "'" : p;
       if (ws && ws.readyState === WebSocket.OPEN) ws.send(arg + " ");
-      showToast("Archivo listo ➜ " + d.name);
+      showToast("Archivo listo → " + d.name);
       if (term) term.focus();
     } catch (_) { showToast("Error de red al subir el archivo", true); }
   }
@@ -282,7 +282,7 @@
     const had = !!capStream;
     if (!(await ensureShare())) return;
     if (!had) {  // recién armado: esta pulsación solo comparte
-      showToast("🖥️ Compartiendo. Ve a la pestaña del error y vuelve aquí: 📷 foto · ⏹ parar.");
+      showToast("Compartiendo pantalla. Ve a la pestaña del error y vuelve: pulsa la cámara para la foto, el cuadrado para parar.");
       return;
     }
     if (!capVideo.videoWidth) return;
@@ -314,7 +314,7 @@
     };
     recorder.start();
     $("screenrec").classList.add("rec-on");
-    showToast("🔴 Grabando. Ve a la pestaña del error, reprodúcelo y vuelve a pulsar 🎥 para parar.");
+    showToast("Grabando. Ve a la pestaña del error, reprodúcelo y vuelve a pulsar el botón de vídeo para parar.");
   }
   async function uploadScreencast(blob) {
     if (!blob || !blob.size || !jwt) { showToast("Grabación vacía", true); return; }
@@ -328,7 +328,7 @@
       const p = d.path;
       const arg = /\s/.test(p) ? "'" + p.replace(/'/g, "'\\''") + "'" : p;
       if (ws && ws.readyState === WebSocket.OPEN) ws.send(arg + " ");
-      showToast("Secuencia lista (" + d.frames + " fotogramas) ➜ " + d.name);
+      showToast("Secuencia lista (" + d.frames + " fotogramas) → " + d.name);
       if (term) term.focus();
     } catch (_) { showToast("Error de red al subir el vídeo", true); }
   }
@@ -410,7 +410,7 @@
   // --- escritorio ---
   function startVoice() {
     if (!recognition) return;
-    try { recognition.start(); listening = true; $("mic").classList.add("mic-on"); showToast("🎤 Escuchando… (toca el micro para parar)"); }
+    try { recognition.start(); listening = true; $("mic").classList.add("mic-on"); showToast("Escuchando… (toca el micro para parar)"); }
     catch (_) {}
   }
   function stopVoice() {
@@ -851,6 +851,10 @@
     if (v) v.hidden = false;
   }
 
+  // Devuelve el markup de un icono del sprite local (#icon-sprite en index.html).
+  // Mismo aspecto en todos los navegadores/SO (no son emojis del sistema).
+  function icon(name) { return '<svg class="ic"><use href="#ic-' + name + '"/></svg>'; }
+
   function _updateTabsUI() {
     const bar = $("tabs"); if (!bar) return;
     // Limpia y vuelve a pintar (pocas pestañas, es barato y robusto).
@@ -865,11 +869,11 @@
       el.className = "tab" + (onTerm && s.current ? " tab-active" : "");
       el.dataset.tab = "term:" + s.label;
       el.title = "Sesión tmux: " + s.label + (s.current ? " (actual)" : "");
-      el.innerHTML = '<span class="tab-ico">🖥</span><span class="tab-name"></span>';
+      el.innerHTML = '<span class="tab-ico">' + icon("terminal") + '</span><span class="tab-name"></span>';
       el.querySelector(".tab-name").textContent = s.label;
       if (!s.current) {   // solo se puede cerrar una sesión que no sea la actual
         const x = document.createElement("button");
-        x.className = "tab-close"; x.textContent = "✕"; x.title = "Cerrar esta sesión";
+        x.className = "tab-close"; x.innerHTML = icon("x"); x.title = "Cerrar esta sesión";
         x.addEventListener("click", (e) => { e.stopPropagation(); killSession(s.label); });
         el.appendChild(x);
       }
@@ -883,7 +887,7 @@
     // --- botón "＋" para crear una sesión tmux nueva (en pestaña) ---
     const plus = document.createElement("div");
     plus.className = "tab tab-new"; plus.title = "Nueva sesión tmux";
-    plus.innerHTML = '<span class="tab-ico">＋</span>';
+    plus.innerHTML = '<span class="tab-ico">' + icon("plus") + '</span>';
     plus.addEventListener("click", newSession);
     bar.appendChild(plus);
 
@@ -894,9 +898,9 @@
       el.dataset.tab = t.id;
       el.title = t.path;
       el.innerHTML =
-        '<span class="tab-ico">📄</span>' +
+        '<span class="tab-ico">' + icon("file-text") + '</span>' +
         '<span class="tab-name"></span>' +
-        '<button class="tab-close" title="Cerrar pestaña">✕</button>';
+        '<button class="tab-close" title="Cerrar pestaña">' + icon("x") + '</button>';
       el.querySelector(".tab-name").textContent = t.name;
       el.addEventListener("click", (e) => {
         if (e.target.closest(".tab-close")) return;
@@ -1006,7 +1010,7 @@
     const text = t.content;
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(
-        () => { const b = $("viewer-copy"); if (b) { const old = b.textContent; b.textContent = "✓"; setTimeout(() => { b.textContent = old; }, 900); } },
+        () => { const b = $("viewer-copy"); if (b) { const old = b.innerHTML; b.innerHTML = icon("check"); setTimeout(() => { b.innerHTML = old; }, 900); } },
         () => fsStatus("No se pudo copiar al portapapeles", "err")
       );
     } else {
@@ -1373,7 +1377,7 @@
       const full = fsJoin(d.path, it.name);
       const row = document.createElement("div");
       row.className = "frow" + (it.dir ? " isdir" : "");
-      const ico = document.createElement("span"); ico.className = "ico"; ico.textContent = it.dir ? "📁" : (it.link ? "🔗" : "📄");
+      const ico = document.createElement("span"); ico.className = "ico"; ico.innerHTML = it.dir ? icon("folder") : (it.link ? icon("link") : icon("file-text"));
       const info = document.createElement("div"); info.className = "finfo";
       const name = document.createElement("span"); name.className = "fname"; name.textContent = it.name; name.title = it.name;
       if (it.dir) name.addEventListener("click", () => fsList(full));
@@ -1381,9 +1385,9 @@
       meta.textContent = (it.dir ? "carpeta · " : fsFmtSize(it.size) + " · ") + fsFmtDate(it.mtime);
       info.appendChild(name); info.appendChild(meta);
       const ops = document.createElement("span"); ops.className = "fops";
-      if (!it.dir) ops.appendChild(fsOp("⬇", "Descargar", () => fsDownload(full)));
-      ops.appendChild(fsOp("✎", "Renombrar / mover", () => fsRename(full, it.name)));
-      ops.appendChild(fsOp("🗑", "Borrar", () => fsDelete(full, it.name, it.dir), "del"));
+      if (!it.dir) ops.appendChild(fsOp(icon("download"), "Descargar", () => fsDownload(full)));
+      ops.appendChild(fsOp(icon("pencil"), "Renombrar / mover", () => fsRename(full, it.name)));
+      ops.appendChild(fsOp(icon("trash-2"), "Borrar", () => fsDelete(full, it.name, it.dir), "del"));
       row.appendChild(ico); row.appendChild(info); row.appendChild(ops);
       // Doble clic sobre un archivo de texto → abrirlo en una pestaña del visor.
       if (!it.dir) row.addEventListener("dblclick", () => viewerOpenPath(full, it.name, it.size));
@@ -1392,7 +1396,7 @@
   }
   function fsOp(label, title, fn, extra) {
     const b = document.createElement("button");
-    b.className = "fop" + (extra ? " " + extra : ""); b.textContent = label; b.title = title;
+    b.className = "fop" + (extra ? " " + extra : ""); b.innerHTML = label; b.title = title;
     b.addEventListener("click", (e) => { e.stopPropagation(); fn(); });
     return b;
   }
