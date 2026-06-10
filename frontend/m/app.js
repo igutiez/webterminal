@@ -232,13 +232,17 @@
     ta.style.height = Math.min(120, ta.scrollHeight) + "px";
   }
   function sendCompose() {
-    const ta = $("compose-input"); const txt = ta.value;
+    const ta = $("compose-input"); const txt = ta.value.trim();
     if (txt && ws && ws.readyState === WebSocket.OPEN) {
       ws.send(txt);
       // El Intro va aparte y con retardo: si llega pegado, la TUI no lo registra.
       setTimeout(() => { if (ws && ws.readyState === WebSocket.OPEN) ws.send("\r"); }, 130);
     }
-    ta.value = ""; autoGrow();
+    ta.value = "";
+    // Reinicia el dictado: si el micro sigue escuchando, su onresult NO debe
+    // repintar el texto recién enviado (era el bug: la caja se volvía a rellenar).
+    baseText = ""; vFinal = "";
+    autoGrow();
   }
   function setupCompose() {
     const ta = $("compose-input");
