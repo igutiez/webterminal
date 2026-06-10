@@ -104,6 +104,14 @@ label.remember input { width: auto; margin: 0; accent-color: var(--accent); curs
 #panes { flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; position: relative; }
 #panes > * { flex: 1 1 auto; min-width: 0; min-height: 0; }
 
+/* Vista dividida: terminal (izquierda) + visor (derecha) a la vez, con divisor
+   arrastrable. El ancho izquierdo lo guarda --split (lo mueve el arrastre en JS). */
+#panes > .panes-divider { flex: 0 0 6px; cursor: col-resize; background: var(--border); z-index: 2; }
+.panes-divider[hidden] { display: none !important; }
+#panes > .panes-divider:hover, .panes-divider.dragging { background: var(--accent); }
+#panes.split > #terminal-container { flex: 0 0 var(--split, 50%); }
+#panes.split > #viewer { flex: 1 1 auto; }
+
 #terminal-container {
   flex: 1 1 auto; min-height: 0; min-width: 0; width: auto; position: relative;
   overflow: hidden; padding: 4px 6px; background: #282a36;
@@ -325,6 +333,7 @@ body.files-open .files-side { display: flex; }
   }
   .frow .fops { opacity: 1; }
   .fop { width: 30px; height: 28px; }
+  #viewer-split { display: none; }   /* la vista dividida no aplica en móvil */
 }
 
 /* ---------- pestañas (terminal + visores de archivos) ---------- */
@@ -468,6 +477,15 @@ mark.find-current { background: var(--accent); color: #08131a; }
 .viewer-md strong { color: var(--text); font-weight: 600; }
 .viewer-md table { border-collapse: collapse; margin: .8em 0; }
 .viewer-md th, .viewer-md td { border: 1px solid var(--border); padding: .35em .7em; }
+
+/* Panel de imagen del visor (png/jpg/gif/webp/…). */
+.viewer-img {
+  flex: 1 1 auto; min-height: 0; min-width: 0; overflow: auto;
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px; background: var(--bg);
+}
+.viewer-img[hidden] { display: none !important; }
+.viewer-img img { max-width: 100%; max-height: 100%; object-fit: contain; box-shadow: 0 2px 18px rgba(0,0,0,.5); border-radius: 4px; }
 .viewer-pre.wrap .viewer-gutter { white-space: pre; } /* gutter siempre en pre para alinear */
 .viewer-pre::-webkit-scrollbar { width: 10px; height: 10px; }
 .viewer-pre::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }

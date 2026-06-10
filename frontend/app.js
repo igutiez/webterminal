@@ -743,7 +743,18 @@
   // ---------- Render de Markdown (vista formateada / texto plano) ----------
   let _mdRendered = true;   // por defecto, los .md se ven formateados
   try { if (localStorage.getItem("wt_viewer_md") === "0") _mdRendered = false; } catch (_) {}
-  function _isMd(tab) { return !!tab && /\.(md|markdown|mdown|mkd)$/i.test(tab.name || ""); }
+  function _isMd(tab) { return !!tab && tab.kind !== "image" && /\.(md|markdown|mdown|mkd)$/i.test(tab.name || ""); }
+  const _IMG_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "avif", "ico"]);
+  function _isImageName(name) { const i = (name || "").lastIndexOf("."); return i >= 0 && _IMG_EXTS.has(name.slice(i + 1).toLowerCase()); }
+  // URL de bytes crudos del archivo (token por query) — sirve para <img> y descargas.
+  function _fileURL(path) { return "/files/download?fsid=" + encodeURIComponent(fsid) + "&path=" + encodeURIComponent(path) + "&token=" + encodeURIComponent(jwt); }
+  // Muestra/oculta los botones que solo tienen sentido en archivos de texto.
+  function _applyToolbarForTab(tab) {
+    const isImg = !!tab && tab.kind === "image";
+    ["viewer-ai", "viewer-edit", "viewer-wrap", "viewer-copy", "viewer-font-dec", "viewer-font-inc"].forEach((id) => {
+      const b = $(id); if (b) b.style.display = isImg ? "none" : "";
+    });
+  }
   function _escapeHtml(s) {
     return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
@@ -793,8 +804,17 @@
   // Decide qué panel del visor se ve (texto plano vs Markdown) según el archivo
   // y la preferencia _mdRendered. El botón MD solo aparece en archivos .md.
   function _applyViewMode(tab) {
-    const pre = $("viewer-pre"), md = $("viewer-md"), btn = $("viewer-md-btn");
+    const pre = $("viewer-pre"), md = $("viewer-md"), btn = $("viewer-md-btn"), imgp = $("viewer-img");
     if (_editing) return;   // editando manda el textarea; no tocamos paneles
+    _applyToolbarForTab(tab);
+    if (tab && tab.kind === "image") {   // imágenes: solo el panel <img>
+      if (pre) pre.hidden = true;
+      if (md) md.hidden = true;
+      if (imgp) imgp.hidden = false;
+      if (btn) btn.hidden = true;
+      return;
+    }
+    if (imgp) imgp.hidden = true;
     const isMd = _isMd(tab);
     if (btn) btn.hidden = !isMd;
     if (isMd && _mdRendered) {
@@ -825,7 +845,7 @@
   }
   function _openFind() {
     const tab = _viewerTabs.get(_activeTab);
-    if (!tab || _activeTab === _TAB_TERM || _editing) return;
+    if (!tab || _activeTab === _TAB_TERM || _editing || tab.kind === "image") return;
     const pre = $("viewer-pre"), md = $("viewer-md");
     if (md) md.hidden = true;
     if (pre) pre.hidden = false;       // la búsqueda necesita el texto plano
@@ -875,6 +895,17 @@
   }
 
   function _renderViewer(tab) {
+    if (!tab) return;
+    _lastViewerId = tab.id;   // recordamos el último archivo visto (para el split)
+    const splitBtn = $("viewer-split"); if (splitBtn) splitBtn.classList.toggle("active", _split);
+    if (tab.kind === "image") {     // archivos de imagen: panel <img>, sin gutter ni texto
+      const img = $("viewer-img-el");
+      if (img) { img.src = tab.url; img.alt = tab.name; }
+      $("viewer-name").textContent = tab.name;
+      $("viewer-meta").textContent = (tab.size ? humanSize(tab.size) + " · " : "") + tab.path;
+      _applyViewMode(tab);
+      return;
+    }
     const code = $("viewer-code"); if (!code) return;
     const gut = $("viewer-gutter");
     // Texto crudo, escapado, con \n conservado (white-space: pre).
@@ -896,18 +927,58 @@
     return (n / (1024 * 1024)).toFixed(1) + " MB";
   }
 
-  function _ensureTerminalVisible() {
-    const tc = $("terminal-container");
-    const v = $("viewer");
-    if (tc) tc.style.display = "";
-    if (v) v.hidden = true;
+  // ---------- Vista dividida (terminal + archivo a la vez) ----------
+  let _split = false, _lastViewerId = null;
+  try { if (localStorage.getItem("wt_split") === "1") _split = true; } catch (_) {}
+  // Decide qué paneles se ven según la pestaña activa y si el split está activo.
+  // Split solo tiene sentido con al menos un archivo abierto.
+  function _applyPanes() {
+    const tc = $("terminal-container"), v = $("viewer"), panes = $("panes"), div = $("panes-divider");
+    const hasViewer = _viewerTabs.size > 0;
+    const split = _split && hasViewer && window.innerWidth >= 640;   // en móvil no se divide
+    const onTerm = _activeTab === _TAB_TERM;
+    if (panes) panes.classList.toggle("split", split);
+    if (div) div.hidden = !split;
+    if (split) {
+      if (tc) tc.style.display = "";
+      if (v) v.hidden = false;
+    } else if (onTerm || !hasViewer) {
+      if (tc) tc.style.display = "";
+      if (v) v.hidden = true;
+    } else {
+      if (tc) tc.style.display = "none";
+      if (v) v.hidden = false;
+    }
   }
-
-  function _ensureViewerVisible() {
-    const tc = $("terminal-container");
-    const v = $("viewer");
-    if (tc) tc.style.display = "none";
-    if (v) v.hidden = false;
+  function _ensureTerminalVisible() { _applyPanes(); }
+  function _ensureViewerVisible() { _applyPanes(); }
+  function _toggleSplit() {
+    if (_viewerTabs.size === 0) { fsStatus("Abre un archivo para usar la vista dividida.", "err"); return; }
+    _split = !_split;
+    try { localStorage.setItem("wt_split", _split ? "1" : "0"); } catch (_) {}
+    const btn = $("viewer-split"); if (btn) btn.classList.toggle("active", _split);
+    _applyPanes();
+    // En split, el panel derecho debe mostrar un archivo aunque la pestaña activa
+    // sea la terminal: usamos el último visor activo.
+    if (_split) { const lv = _viewerTabs.get(_lastViewerId) || _viewerTabs.values().next().value; if (lv) _renderViewer(lv); }
+    fsRefit();
+  }
+  function _setupSplitDrag() {
+    const div = $("panes-divider"), panes = $("panes");
+    if (!div || !panes) return;
+    let dragging = false;
+    const onMove = (clientX) => {
+      const r = panes.getBoundingClientRect();
+      let pct = ((clientX - r.left) / r.width) * 100;
+      pct = Math.max(20, Math.min(80, pct));
+      panes.style.setProperty("--split", pct + "%");
+      fsRefit();
+    };
+    div.addEventListener("mousedown", (e) => { dragging = true; div.classList.add("dragging"); document.body.style.userSelect = "none"; e.preventDefault(); });
+    window.addEventListener("mousemove", (e) => { if (dragging) onMove(e.clientX); });
+    window.addEventListener("mouseup", () => { if (dragging) { dragging = false; div.classList.remove("dragging"); document.body.style.userSelect = ""; fsRefit(); } });
+    // Al pasar a móvil/escritorio, recalcular el reparto de paneles.
+    window.addEventListener("resize", () => { if (_split) { _applyPanes(); fsRefit(); } });
   }
 
   // Devuelve el markup de un icono del sprite local (#icon-sprite en index.html).
@@ -1013,6 +1084,19 @@
   async function viewerOpenPath(path, name, sizeHint) {
     if (!_tryExitEdit()) return;   // no abrir otro archivo con cambios sin guardar
     if (!fsid) { fsStatus("Abre la terminal primero (el visor usa tu sesión SSH).", "err"); return; }
+    // ¿Ya hay una pestaña abierta con este path? Reutilízala.
+    for (const t of _viewerTabs.values()) if (t.path === path) { switchTab(t.id); fsStatus("'" + name + "' ya estaba abierto ✓", "ok"); return; }
+    // Imágenes: panel <img> directo (no pasa por /files/read, que rechaza binarios).
+    if (_isImageName(name)) {
+      const id = "v" + (++_tabSeq);
+      _viewerTabs.set(id, { id, name, path, kind: "image", url: _fileURL(path), size: sizeHint || 0, content: "" });
+      _activeTab = id;
+      _ensureViewerVisible();
+      _renderViewer(_viewerTabs.get(id));
+      _updateTabsUI();
+      fsStatus("Imagen '" + name + "' ✓", "ok");
+      return;
+    }
     if (!_isProbablyTextName(name)) {
       // Dejamos que el backend sea quien diga la última palabra, pero avisamos
       // al usuario de que igual no es texto.
@@ -1020,8 +1104,6 @@
     } else {
       fsStatus("Abriendo '" + name + "'…");
     }
-    // ¿Ya hay una pestaña abierta con este path? Reutilízala.
-    for (const t of _viewerTabs.values()) if (t.path === path) { switchTab(t.id); fsStatus("'" + name + "' ya estaba abierto ✓", "ok"); return; }
     try {
       const res = await fetch("/files/read?fsid=" + encodeURIComponent(fsid) + "&path=" + encodeURIComponent(path), { headers: fsHeaders() });
       const d = await res.json().catch(() => ({}));
@@ -1052,6 +1134,10 @@
   async function _viewerReload() {
     const t = _viewerTabs.get(_activeTab);
     if (!t) return;
+    if (t.kind === "image") {   // recargar imagen = volver a pedir los bytes (cache-bust)
+      const img = $("viewer-img-el"); if (img) img.src = _fileURL(t.path) + "&_=" + Date.now();
+      fsStatus("Imagen recargada ✓", "ok"); return;
+    }
     if (_editing) {
       // No pisamos cambios sin guardar a la brava: que el usuario decida.
       if (!confirm("Hay cambios sin guardar en la edición. ¿Descartarlos y recargar desde el disco?")) return;
@@ -1208,6 +1294,11 @@
     if (copy) copy.addEventListener("click", _viewerCopyAll);
     const reload = $("viewer-reload");
     if (reload) reload.addEventListener("click", _viewerReload);
+    const dl = $("viewer-download");
+    if (dl) dl.addEventListener("click", () => { const t = _viewerTabs.get(_activeTab); if (t) fsDownload(t.path); });
+    const splitBtn = $("viewer-split");
+    if (splitBtn) splitBtn.addEventListener("click", _toggleSplit);
+    _setupSplitDrag();
     const editArea = $("viewer-edit-area");
     if (editArea) editArea.addEventListener("input", _onEditInput);
     const mdBtn = $("viewer-md-btn");
