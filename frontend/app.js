@@ -1059,7 +1059,14 @@
     if (S) S.hidden = !usesSec;
     if (V) V.hidden = !usesViewer;
     if (usesSec) T2.attach(_secSessionWanted()); else T2.close();
-    if (panes) panes.append(_slotEl(_slots.L), div, _slotEl(_slots.R));   // orden DOM = orden visual
+    // Orden DOM = orden visual. CLAVE: los elementos NO usados (ocultos) van al
+    // final; si no, uno de ellos queda como :first-child y el `flex: var(--split)`
+    // (que apunta a *:first-child) se aplicaría al panel oculto → no redimensiona.
+    if (panes) {
+      const Lel = _slotEl(_slots.L), Rel = _slotEl(_slots.R);
+      const unused = [P, S, V].filter((el) => el && el !== Lel && el !== Rel);
+      panes.append(Lel, div, Rel, ...unused);
+    }
     _applyFocusOutline();
   }
   function _ensureTerminalVisible() { _applyPanes(); }
