@@ -647,6 +647,13 @@
   // Recibe la lista del backend y repinta las pestañas.
   function renderSessions(list) {
     _sessions = Array.isArray(list) ? list : [];
+    // Conserva la sesión del hueco secundario aunque el backend aún no la liste:
+    // la "split" recién creada por T2 tarda un instante en aparecer en la lista,
+    // y sin esto su pestaña parpadearía (aparece y desaparece) al reconciliar.
+    if (_splitActive()) {
+      const ss = _secSessionWanted();
+      if (ss && !_sessions.some((s) => s.label === ss)) _sessions.push({ label: ss, current: false });
+    }
     _updateTabsUI();
   }
   function requestSessions() {
@@ -1257,6 +1264,17 @@
     if (_slots.R.kind === "sec") return _slots.R.session;
     return null;
   }
+  // Garantiza que la sesión del hueco secundario tenga su pestaña. La "split"
+  // que se auto-crea al duplicar pantalla con un solo tmux no llega por la lista
+  // del backend hasta que T2 la crea (new-session -A); la añadimos optimistamente
+  // para que la pestaña salga al instante y pedimos la lista real para reconciliar.
+  function _ensureSecSessionTab(label) {
+    if (!label) return;
+    if (_sessions.some((s) => s.label === label)) return;
+    _sessions.push({ label, current: false });
+    _updateTabsUI();
+    requestSessions();
+  }
   function _otherSession() {
     const cur = currentSession || "principal";
     for (const s of _sessions) { if (s.label && s.label !== cur) return s.label; }
@@ -1294,7 +1312,7 @@
     if (P) P.style.display = usesMain ? "" : "none";   // la principal sigue conectada aunque se oculte (da el fsid)
     if (S) S.hidden = !usesSec;
     if (V) V.hidden = !usesViewer;
-    if (usesSec) T2.attach(_secSessionWanted()); else T2.close();
+    if (usesSec) { const ss = _secSessionWanted(); T2.attach(ss); _ensureSecSessionTab(ss); } else T2.close();
     // Orden DOM = orden visual. CLAVE: los elementos NO usados (ocultos) van al
     // final; si no, uno de ellos queda como :first-child y el `flex: var(--split)`
     // (que apunta a *:first-child) se aplicaría al panel oculto → no redimensiona.
