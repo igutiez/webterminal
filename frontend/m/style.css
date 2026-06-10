@@ -137,6 +137,9 @@ body {
   flex: 1; margin: 0; overflow: auto; padding: 12px; font-family: "JetBrains Mono", monospace; font-size: 13px;
   line-height: 1.5; white-space: pre; color: var(--text);
 }
+/* Ajuste de línea: todo cabe en pantalla, sin scroll horizontal (por defecto). */
+.fv-pre.wrap { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+.tbtn.on { color: var(--accent); }
 .fv-img { flex: 1; overflow: auto; display: flex; align-items: center; justify-content: center; background: #000; }
 .fv-img img { max-width: 100%; max-height: 100%; object-fit: contain; }
 

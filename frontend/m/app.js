@@ -355,6 +355,9 @@
   function fsStatus(msg) { $("files-status").textContent = msg || ""; }
   function fmtSize(n) { if (n < 1024) return n + " B"; const u = ["KB", "MB", "GB", "TB"]; let i = -1; do { n /= 1024; i++; } while (n >= 1024 && i < u.length - 1); return n.toFixed(n < 10 ? 1 : 0) + " " + u[i]; }
   function fsJoin(dir, name) { return (dir === "/" ? "" : dir) + "/" + name; }
+  // Ajuste de línea del visor (por defecto activado: todo cabe sin scroll horizontal).
+  let _wrap = true; try { _wrap = localStorage.getItem("wt_m_wrap") !== "0"; } catch (_) {}
+  function applyWrap() { const pre = $("fv-pre"), b = $("fv-wrap"); if (pre) pre.classList.toggle("wrap", _wrap); if (b) b.classList.toggle("on", _wrap); }
 
   async function fsList(path) {
     if (!fsid) { fsStatus("Conecta la terminal primero."); return; }
@@ -399,8 +402,10 @@
     $("fv-name").textContent = name;
     $("fv-download").onclick = () => { const a = document.createElement("a"); a.href = fileURL(path); a.download = ""; document.body.appendChild(a); a.click(); a.remove(); };
     if (isImg(name)) {
+      $("fv-wrap").hidden = true;
       pre.hidden = true; imgWrap.hidden = false; imgEl.src = fileURL(path); fv.hidden = false; return;
     }
+    $("fv-wrap").hidden = false; applyWrap();
     imgWrap.hidden = true; pre.hidden = false; pre.textContent = "Cargando…"; fv.hidden = false;
     try {
       const res = await fetch("/files/read?fsid=" + encodeURIComponent(fsid) + "&path=" + encodeURIComponent(path), { headers: fsHeaders() });
@@ -423,6 +428,7 @@
     $("files-btn").addEventListener("click", () => { openSheet("sheet-files"); fsList(fsPath || ""); });
     $("files-close").addEventListener("click", () => closeSheet("sheet-files"));
     $("fv-back").addEventListener("click", () => { $("file-view").hidden = true; $("fv-img-el").src = ""; });
+    $("fv-wrap").addEventListener("click", () => { _wrap = !_wrap; try { localStorage.setItem("wt_m_wrap", _wrap ? "1" : "0"); } catch (_) {} applyWrap(); });
     $("files-up").addEventListener("click", () => $("files-input").click());
     $("files-input").addEventListener("change", (e) => { const f = (e.target.files || [])[0]; if (f) fsUpload(f); e.target.value = ""; });
   }
