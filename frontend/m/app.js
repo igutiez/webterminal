@@ -98,13 +98,16 @@
     $("link-desktop2").addEventListener("click", goDesktop);
   }
 
-  function sshConnect(openClaude) {
+  async function sshConnect(openClaude) {
     const user = $("ssh-user").value.trim(), password = $("ssh-password").value;
     $("ssh-error").textContent = "";
     if (!user || !password) { $("ssh-error").textContent = "Usuario y contraseña."; return; }
     if ($("ssh-remember").checked) saveCreds({ ssh_user: user, ssh_password: password }); else clearCreds(["ssh_user", "ssh_password"]);
     sshUser = user; sshPassword = password; autoOpenClaude = !!openClaude;
     show("app-screen");
+    // Espera a que la fuente monoespaciada esté lista ANTES de medir celdas
+    // (si no, xterm calcula mal el tamaño y se ve descuadrado en iPhone).
+    try { await document.fonts.load('13px "JetBrains Mono"'); await document.fonts.ready; } catch (_) {}
     initTerminal();
     setupKeybar(); setupCompose(); setupVoice(); setupSessions(); setupFiles();
     connectWS();
