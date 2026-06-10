@@ -25,7 +25,7 @@
   <script src="https://unpkg.com/xterm-addon-search@0.13.0/lib/xterm-addon-search.js"></script>
   <script src="https://unpkg.com/xterm-addon-canvas@0.5.0/lib/xterm-addon-canvas.js"></script>
 
-  <link rel="stylesheet" href="style.css?v=29" />
+  <link rel="stylesheet" href="style.css?v=31" />
 </head>
 <body>
   <!-- LOGIN -->
@@ -165,6 +165,10 @@
               <span id="viewer-meta" class="viewer-meta"></span>
               <span class="viewer-tools">
                 <button id="viewer-ai" class="vbtn" title="Pedir a un modelo que cambie la selección (o todo el archivo)">✨</button>
+                <button id="viewer-reload" class="vbtn" title="Recargar el archivo desde el disco">🔄</button>
+                <button id="viewer-md-btn" class="vbtn" title="Ver Markdown formateado / texto plano" hidden>MD</button>
+                <button id="viewer-font-dec" class="vbtn" title="Reducir el tamaño del texto">A−</button>
+                <button id="viewer-font-inc" class="vbtn" title="Aumentar el tamaño del texto">A+</button>
                 <button id="viewer-edit" class="vbtn" title="Editar este archivo">✏️</button>
                 <button id="viewer-save" class="vbtn vbtn-save" title="Guardar cambios (Ctrl+S)" hidden>💾</button>
                 <button id="viewer-wrap" class="vbtn" title="Ajuste de línea (alternar)">↩</button>
@@ -173,6 +177,7 @@
               </span>
             </div>
             <pre id="viewer-pre" class="viewer-pre wrap"><div id="viewer-gutter" class="viewer-gutter"></div><code id="viewer-code" class="viewer-code"></code></pre>
+            <div id="viewer-md" class="viewer-md" hidden></div>
             <textarea id="viewer-edit-area" class="viewer-edit-area" spellcheck="false" hidden></textarea>
           </div>
         </div>
@@ -275,6 +280,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=31"></script>
+  <script src="app.js?v=33"></script>
 </body>
 </html>

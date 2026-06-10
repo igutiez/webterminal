@@ -723,6 +723,98 @@
     }[c]));
   }
 
+  // ---------- Tamaño de fuente del visor (persistente) ----------
+  let _viewerFont = 12.5;
+  try { const f = parseFloat(localStorage.getItem("wt_viewer_font")); if (f >= 8 && f <= 40) _viewerFont = f; } catch (_) {}
+  function _applyViewerFont() {
+    const px = _viewerFont + "px";
+    const pre = $("viewer-pre"); if (pre) pre.style.fontSize = px;
+    const ta = $("viewer-edit-area"); if (ta) ta.style.fontSize = px;
+    // La vista Markdown es prosa, no monoespaciada: le damos un punto más para que respire.
+    const md = $("viewer-md"); if (md) md.style.fontSize = (_viewerFont + 1) + "px";
+  }
+  function _bumpFont(delta) {
+    _viewerFont = Math.min(40, Math.max(8, Math.round((_viewerFont + delta) * 10) / 10));
+    try { localStorage.setItem("wt_viewer_font", String(_viewerFont)); } catch (_) {}
+    _applyViewerFont();
+    fsStatus("Texto a " + _viewerFont + "px", "ok");
+  }
+
+  // ---------- Render de Markdown (vista formateada / texto plano) ----------
+  let _mdRendered = true;   // por defecto, los .md se ven formateados
+  try { if (localStorage.getItem("wt_viewer_md") === "0") _mdRendered = false; } catch (_) {}
+  function _isMd(tab) { return !!tab && /\.(md|markdown|mdown|mkd)$/i.test(tab.name || ""); }
+  function _escapeHtml(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  // Formato en línea sobre texto YA escapado (negrita, cursiva, código, tachado, enlaces).
+  function _mdInline(t) {
+    t = t.replace(/`([^`]+)`/g, (m, c) => "<code>" + c + "</code>");
+    t = t.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    t = t.replace(/__([^_]+)__/g, "<strong>$1</strong>");
+    t = t.replace(/(^|[^*])\*([^*\s][^*]*?)\*/g, "$1<em>$2</em>");
+    t = t.replace(/~~([^~]+)~~/g, "<del>$1</del>");
+    t = t.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, txt, url) => {
+      if (/^\s*javascript:/i.test(url)) return txt;   // sin esquemas peligrosos
+      return '<a href="' + url + '" target="_blank" rel="noopener noreferrer">' + txt + "</a>";
+    });
+    return t;
+  }
+  // Conversor de bloques: cabeceras, listas, citas, hr, fences y párrafos.
+  function _renderMarkdown(src) {
+    const fences = [];
+    src = src.replace(/\r\n/g, "\n").replace(/```[ \t]*[\w-]*\n?([\s\S]*?)```/g, (m, c) => {
+      fences.push(c.replace(/\n$/, ""));
+      return " F" + (fences.length - 1) + " ";
+    });
+    const out = [];
+    let para = [], listType = null, listItems = [];
+    const flushPara = () => { if (para.length) { out.push("<p>" + _mdInline(_escapeHtml(para.join(" ").trim())) + "</p>"); para = []; } };
+    const flushList = () => { if (listType) { out.push("<" + listType + ">" + listItems.map(li => "<li>" + _mdInline(_escapeHtml(li)) + "</li>").join("") + "</" + listType + ">"); listType = null; listItems = []; } };
+    const flushAll = () => { flushPara(); flushList(); };
+    for (const line of src.split("\n")) {
+      const fm = line.match(/^ F(\d+) $/);
+      if (fm) { flushAll(); out.push("<pre class='md-code'><code>" + _escapeHtml(fences[+fm[1]]) + "</code></pre>"); continue; }
+      if (/^\s*$/.test(line)) { flushAll(); continue; }
+      const h = line.match(/^(#{1,6})\s+(.*)$/);
+      if (h) { flushAll(); out.push("<h" + h[1].length + ">" + _mdInline(_escapeHtml(h[2])) + "</h" + h[1].length + ">"); continue; }
+      if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { flushAll(); out.push("<hr>"); continue; }
+      const bq = line.match(/^\s*>\s?(.*)$/);
+      if (bq) { flushPara(); flushList(); out.push("<blockquote>" + _mdInline(_escapeHtml(bq[1])) + "</blockquote>"); continue; }
+      const ul = line.match(/^\s*[-*+]\s+(.*)$/);
+      if (ul) { flushPara(); if (listType && listType !== "ul") flushList(); listType = "ul"; listItems.push(ul[1]); continue; }
+      const ol = line.match(/^\s*\d+\.\s+(.*)$/);
+      if (ol) { flushPara(); if (listType && listType !== "ol") flushList(); listType = "ol"; listItems.push(ol[1]); continue; }
+      flushList(); para.push(line.trim());
+    }
+    flushAll();
+    return out.join("\n");
+  }
+  // Decide qué panel del visor se ve (texto plano vs Markdown) según el archivo
+  // y la preferencia _mdRendered. El botón MD solo aparece en archivos .md.
+  function _applyViewMode(tab) {
+    const pre = $("viewer-pre"), md = $("viewer-md"), btn = $("viewer-md-btn");
+    if (_editing) return;   // editando manda el textarea; no tocamos paneles
+    const isMd = _isMd(tab);
+    if (btn) btn.hidden = !isMd;
+    if (isMd && _mdRendered) {
+      if (md) { md.innerHTML = _renderMarkdown(tab.content); md.hidden = false; }
+      if (pre) pre.hidden = true;
+      if (btn) { btn.classList.add("active"); btn.textContent = "TXT"; btn.title = "Ver texto plano"; }
+    } else {
+      if (md) md.hidden = true;
+      if (pre) pre.hidden = false;
+      if (btn) { btn.classList.remove("active"); btn.textContent = "MD"; btn.title = "Ver Markdown formateado"; }
+    }
+  }
+  function _toggleMd() {
+    const tab = _viewerTabs.get(_activeTab);
+    if (!_isMd(tab)) return;
+    _mdRendered = !_mdRendered;
+    try { localStorage.setItem("wt_viewer_md", _mdRendered ? "1" : "0"); } catch (_) {}
+    _applyViewMode(tab);
+  }
+
   function _renderViewer(tab) {
     const code = $("viewer-code"); if (!code) return;
     const gut = $("viewer-gutter");
@@ -735,6 +827,8 @@
     gut.textContent = lines.join("\n");
     $("viewer-name").textContent = tab.name;
     $("viewer-meta").textContent = humanSize(tab.content.length) + " · " + tab.path;
+    _applyViewMode(tab);
+    _applyViewerFont();
   }
 
   function humanSize(n) {
@@ -877,6 +971,35 @@
     } catch (_) { fsStatus("Error de red al abrir '" + name + "'", "err"); }
   }
 
+  // Recarga el contenido de la pestaña activa desde el disco (por si el archivo
+  // ha cambiado fuera del visor: edición por SSH, IA en otra sesión, etc.).
+  async function _viewerReload() {
+    const t = _viewerTabs.get(_activeTab);
+    if (!t) return;
+    if (_editing) {
+      // No pisamos cambios sin guardar a la brava: que el usuario decida.
+      if (!confirm("Hay cambios sin guardar en la edición. ¿Descartarlos y recargar desde el disco?")) return;
+      _exitEdit();
+    }
+    if (!fsid) { fsStatus("Abre la terminal primero (el visor usa tu sesión SSH).", "err"); return; }
+    const btn = $("viewer-reload");
+    if (btn) btn.classList.add("spinning");
+    try {
+      const res = await fetch("/files/read?fsid=" + encodeURIComponent(fsid) + "&path=" + encodeURIComponent(t.path), { headers: fsHeaders() });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { fsStatus(d.detail || ("Error " + res.status), "err"); return; }
+      const fresh = d.content || "";
+      if (fresh === t.content) { fsStatus("'" + t.name + "' ya estaba al día ✓", "ok"); return; }
+      t.content = fresh;
+      _renderViewer(t);
+      fsStatus("'" + t.name + "' recargado desde el disco ✓", "ok");
+    } catch (_) {
+      fsStatus("Error de red al recargar '" + t.name + "'", "err");
+    } finally {
+      if (btn) btn.classList.remove("spinning");
+    }
+  }
+
   function _viewerCopyAll() {
     const t = _viewerTabs.get(_activeTab);
     if (!t) return;
@@ -911,8 +1034,9 @@
     if (!tab) return;
     _editing = true; _editTabId = tab.id;
     const ta = $("viewer-edit-area");
-    if (ta) { ta.value = tab.content; ta.hidden = false; }
+    if (ta) { ta.value = tab.content; ta.hidden = false; ta.style.fontSize = _viewerFont + "px"; }
     const pre = $("viewer-pre"); if (pre) pre.hidden = true;
+    const md = $("viewer-md"); if (md) md.hidden = true;   // se edita siempre el texto crudo
     const sv = $("viewer-save"); if (sv) sv.hidden = false;
     const eb = $("viewer-edit"); if (eb) { eb.classList.add("active"); eb.title = "Cancelar edición"; }
     if (ta) ta.focus();
@@ -920,9 +1044,10 @@
   function _exitEdit() {
     _editing = false; _editTabId = null;
     const ta = $("viewer-edit-area"); if (ta) ta.hidden = true;
-    const pre = $("viewer-pre"); if (pre) pre.hidden = false;
     const sv = $("viewer-save"); if (sv) sv.hidden = true;
     const eb = $("viewer-edit"); if (eb) { eb.classList.remove("active"); eb.title = "Editar este archivo"; }
+    // Restaura el panel correcto (texto plano o Markdown) según el archivo activo.
+    _applyViewMode(_viewerTabs.get(_activeTab));
   }
   // Sale del modo edición; si hay cambios sin guardar, pide confirmación.
   // Devuelve true si se pudo salir (o no se estaba editando).
@@ -966,6 +1091,14 @@
     if (close) close.addEventListener("click", () => closeViewerTab(_activeTab));
     const copy = $("viewer-copy");
     if (copy) copy.addEventListener("click", _viewerCopyAll);
+    const reload = $("viewer-reload");
+    if (reload) reload.addEventListener("click", _viewerReload);
+    const mdBtn = $("viewer-md-btn");
+    if (mdBtn) mdBtn.addEventListener("click", _toggleMd);
+    const fdec = $("viewer-font-dec");
+    if (fdec) fdec.addEventListener("click", () => _bumpFont(-1));
+    const finc = $("viewer-font-inc");
+    if (finc) finc.addEventListener("click", () => _bumpFont(1));
     const wrap = $("viewer-wrap");
     if (wrap) wrap.addEventListener("click", _viewerToggleWrap);
     // Ajuste de línea ACTIVADO por defecto: el texto se adapta al ancho de la
@@ -1041,8 +1174,12 @@
       ? "Todo el archivo"
       : `Selección: líneas ${l1}–${l2} · ${info.text.length} caracteres`) + " · " + tab.name;
     const st = $("ai-status"); st.textContent = ""; st.className = "ai-status";
+    // Limpiamos el diálogo: la instrucción anterior y cualquier previsualización
+    // pendiente de una pasada previa, para no arrastrar texto de otra petición.
+    $("ai-preview").hidden = true; _aiPending = null;
+    const ta = $("ai-instruction"); if (ta) ta.value = "";
     $("ai-overlay").hidden = false;
-    const ta = $("ai-instruction"); if (ta) ta.focus();
+    if (ta) ta.focus();
   }
 
   async function _aiSend() {
