@@ -897,7 +897,6 @@
   function _renderViewer(tab) {
     if (!tab) return;
     _lastViewerId = tab.id;   // recordamos el último archivo visto (para el split)
-    const splitBtn = $("viewer-split"); if (splitBtn) splitBtn.classList.toggle("active", _split);
     if (tab.kind === "image") {     // archivos de imagen: panel <img>, sin gutter ni texto
       const img = $("viewer-img-el");
       if (img) { img.src = tab.url; img.alt = tab.name; }
@@ -939,6 +938,7 @@
     const onTerm = _activeTab === _TAB_TERM;
     if (panes) panes.classList.toggle("split", split);
     if (div) div.hidden = !split;
+    const btn = $("split-btn"); if (btn) btn.classList.toggle("active", split);
     if (split) {
       if (tc) tc.style.display = "";
       if (v) v.hidden = false;
@@ -953,10 +953,9 @@
   function _ensureTerminalVisible() { _applyPanes(); }
   function _ensureViewerVisible() { _applyPanes(); }
   function _toggleSplit() {
-    if (_viewerTabs.size === 0) { fsStatus("Abre un archivo para usar la vista dividida.", "err"); return; }
+    if (_viewerTabs.size === 0) { showToast("Abre un archivo para usar la vista dividida.", true); return; }
     _split = !_split;
     try { localStorage.setItem("wt_split", _split ? "1" : "0"); } catch (_) {}
-    const btn = $("viewer-split"); if (btn) btn.classList.toggle("active", _split);
     _applyPanes();
     // En split, el panel derecho debe mostrar un archivo aunque la pestaña activa
     // sea la terminal: usamos el último visor activo.
@@ -1296,7 +1295,7 @@
     if (reload) reload.addEventListener("click", _viewerReload);
     const dl = $("viewer-download");
     if (dl) dl.addEventListener("click", () => { const t = _viewerTabs.get(_activeTab); if (t) fsDownload(t.path); });
-    const splitBtn = $("viewer-split");
+    const splitBtn = $("split-btn");
     if (splitBtn) splitBtn.addEventListener("click", _toggleSplit);
     _setupSplitDrag();
     const editArea = $("viewer-edit-area");

@@ -25,7 +25,7 @@
   <script src="https://unpkg.com/xterm-addon-search@0.13.0/lib/xterm-addon-search.js"></script>
   <script src="https://unpkg.com/xterm-addon-canvas@0.5.0/lib/xterm-addon-canvas.js"></script>
 
-  <link rel="stylesheet" href="style.css?v=34" />
+  <link rel="stylesheet" href="style.css?v=35" />
 </head>
 <body>
   <!-- Sprite de iconos SVG (local, mismo aspecto en Safari/Chrome/iOS/Android). Lucide, ISC. -->
@@ -156,6 +156,7 @@
       <div class="center">MessorTerminal</div>
       <div class="right">
         <button id="files-btn" title="Explorador de archivos (subir / descargar)"><svg class="ic"><use href="#ic-folder"/></svg></button>
+        <button id="split-btn" title="Vista dividida: terminal y archivo a la vez"><svg class="ic"><use href="#ic-columns-2"/></svg></button>
         <button id="ai-config-btn" title="Configurar modelos de IA por API (Kimi / DeepSeek)"><svg class="ic"><use href="#ic-settings"/></svg></button>
         <button id="screencap" title="Foto de pantalla para que Claude vea el error"><svg class="ic"><use href="#ic-camera"/></svg></button>
         <button id="screenrec" title="Grabar vídeo (Claude verá los fotogramas del error)"><svg class="ic"><use href="#ic-video"/></svg></button>
@@ -202,7 +203,6 @@
                 <button id="viewer-ai" class="vbtn" title="Pedir a un modelo que cambie la selección (o todo el archivo)"><svg class="ic"><use href="#ic-sparkles"/></svg></button>
                 <button id="viewer-reload" class="vbtn" title="Recargar el archivo desde el disco"><svg class="ic"><use href="#ic-rotate-cw"/></svg></button>
                 <button id="viewer-download" class="vbtn" title="Descargar este archivo"><svg class="ic"><use href="#ic-download"/></svg></button>
-                <button id="viewer-split" class="vbtn" title="Vista dividida: terminal y archivo a la vez"><svg class="ic"><use href="#ic-columns-2"/></svg></button>
                 <button id="viewer-md-btn" class="vbtn" title="Ver Markdown formateado / texto plano" hidden>MD</button>
                 <button id="viewer-font-dec" class="vbtn" title="Reducir el tamaño del texto">A−</button>
                 <button id="viewer-font-inc" class="vbtn" title="Aumentar el tamaño del texto">A+</button>
@@ -325,6 +325,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=36"></script>
+  <script src="app.js?v=37"></script>
 </body>
 </html>

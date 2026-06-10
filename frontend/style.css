@@ -79,6 +79,7 @@ html, body {
   width: 24px; height: 22px; border-radius: 5px; cursor: pointer; font-size: 14px; line-height: 1;
 }
 #topbar button:hover { border-color: var(--accent); color: var(--accent); }
+#topbar button.active { background: var(--accent); color: #08131a; border-color: var(--accent); }
 
 /* Iconos SVG del sprite local (#icon-sprite). Heredan el color del botón
    (stroke=currentColor) y escalan con su font-size. pointer-events:none para
@@ -333,7 +334,7 @@ body.files-open .files-side { display: flex; }
   }
   .frow .fops { opacity: 1; }
   .fop { width: 30px; height: 28px; }
-  #viewer-split { display: none; }   /* la vista dividida no aplica en móvil */
+  #split-btn { display: none; }   /* la vista dividida no aplica en móvil */
 }
 
 /* ---------- pestañas (terminal + visores de archivos) ---------- */
