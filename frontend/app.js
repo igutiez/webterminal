@@ -699,10 +699,17 @@
   let _editing = false;                 // ¿el visor está en modo edición?
   let _editTabId = null;                // id de la pestaña que se está editando
   let _tabsRestored = false;            // ¿ya reabrimos las pestañas de la sesión anterior?
+  // Capturamos la lista guardada AHORA, al cargar el script, ANTES de que cualquier
+  // _updateTabsUI (con el visor vacío) la sobrescriba con []. Restauramos desde aquí.
+  const _savedTabs = (() => {
+    try { const a = JSON.parse(localStorage.getItem("wt_open_tabs") || "[]"); return Array.isArray(a) ? a : []; }
+    catch (_) { return []; }
+  })();
 
   // Persistir/restaurar las pestañas de archivos abiertos entre RECARGAS de página
   // (las sesiones tmux vuelven solas; los archivos abiertos viven solo en memoria).
   function _persistOpenTabs() {
+    if (!_tabsRestored) return;   // no guardes [] antes de restaurar (pisaría la lista)
     try {
       const arr = [];
       _viewerTabs.forEach((t) => arr.push({ path: t.path, name: t.name }));
@@ -712,10 +719,7 @@
   function _restoreOpenTabs() {
     if (_tabsRestored) return;     // solo en la 1ª conexión tras cargar la página
     _tabsRestored = true;
-    let arr = [];
-    try { arr = JSON.parse(localStorage.getItem("wt_open_tabs") || "[]"); } catch (_) {}
-    if (!Array.isArray(arr)) return;
-    arr.forEach((it) => { if (it && it.path) viewerOpenPath(it.path, it.name || it.path.split("/").pop(), 0); });
+    _savedTabs.forEach((it) => { if (it && it.path) viewerOpenPath(it.path, it.name || it.path.split("/").pop(), 0); });
   }
 
   // Subconjunto "humano" de extensiones que tratamos como texto. Coincide con
