@@ -450,7 +450,7 @@
     term = new Terminal({
       theme: { background:"#16162e", foreground:"#f8f8f2", cursor:"#f8f8f2", selectionBackground:"#31315a",
         black:"#21222c", red:"#ff5555", green:"#50fa7b", yellow:"#f1fa8c", blue:"#6272a4",
-        magenta:"#ff79c6", cyan:"#8be9fd", white:"#f8f8f2" },
+        magenta:"#ff79c6", cyan:"#58c4ff", white:"#f8f8f2" },
       fontFamily: "'JetBrains Mono', monospace", fontSize: 14, lineHeight: 1.0,
       scrollSensitivity: 3,
       cursorBlink: true, cursorStyle: "block", scrollback: 10000, allowProposedApi: true,
@@ -1204,7 +1204,7 @@
       t = new Terminal({
         theme: { background: "#16162e", foreground: "#f8f8f2", cursor: "#f8f8f2", selectionBackground: "#31315a",
           black: "#21222c", red: "#ff5555", green: "#50fa7b", yellow: "#f1fa8c", blue: "#6272a4",
-          magenta: "#ff79c6", cyan: "#8be9fd", white: "#f8f8f2" },
+          magenta: "#ff79c6", cyan: "#58c4ff", white: "#f8f8f2" },
         fontFamily: "'JetBrains Mono', monospace", fontSize: 14, lineHeight: 1.0,
         scrollSensitivity: 3, cursorBlink: true, cursorStyle: "block", scrollback: 10000, allowProposedApi: true,
       });
