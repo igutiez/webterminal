@@ -670,6 +670,14 @@
     switchSession(label);
   }
   function killSession(label) {
+    // Si esa sesión está en la 2ª terminal (T2), ciérrala primero: si no, T2 se
+    // reconectaría y la recrearía (tmux new-session -A).
+    if (T2.sessionLabel() === label) {
+      T2.close();
+      ["L", "R"].forEach((s) => { if (_slots[s].kind === "sec") _slots[s] = (_viewerTabs.size ? { kind: "viewer" } : { kind: "main" }); });
+      if (_slots.L.kind === "main" && _slots.R.kind === "main") _split = false;   // sin 2º contenido: salir de split
+      _applyPanes(); _updateTabsUI(); _refitPanes();
+    }
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "tmux-kill", label }));
     // El backend responde con la lista ya actualizada (renderSessions).
   }
@@ -798,6 +806,8 @@
       _applyPanes();          // conecta T2 a la sesión "run"
       T2.send(full);          // se ejecuta cuando el shell esté listo (búfer si hace falta)
       _updateTabsUI(); _refitPanes(); T2.focus();
+      // Refresca la lista para que la sesión "run" salga como pestaña (con su ✕).
+      setTimeout(requestSessions, 900);
     } else {
       // Móvil (sin sitio para dividir): cambia la terminal principal a la sesión
       // "run" (tu sesión de Claude sigue viva en tmux) y ejecuta allí.
