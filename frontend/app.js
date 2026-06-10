@@ -761,8 +761,12 @@
   function _applyViewerFont() {
     const px = _viewerFont + "px";
     const pre = $("viewer-pre"); if (pre) pre.style.fontSize = px;
-    const ta = $("viewer-edit-area"); if (ta) ta.style.fontSize = px;
-    const hl = $("viewer-edit-hl"); if (hl) hl.style.fontSize = px;   // capa coloreada del editor
+    // Editor: misma fuente Y line-height EN PÍXELES ENTEROS en el textarea y la capa
+    // coloreada, para que cada línea quede a la misma altura y el cursor coincida.
+    const lh = Math.round(_viewerFont * 1.55) + "px";
+    ["viewer-edit-area", "viewer-edit-hl", "viewer-edit-code"].forEach((id) => {
+      const el = $(id); if (el) { el.style.fontSize = px; el.style.lineHeight = lh; }
+    });
     // La vista Markdown es prosa, no monoespaciada: le damos un punto más para que respire.
     const md = $("viewer-md"); if (md) md.style.fontSize = (_viewerFont + 1) + "px";
   }

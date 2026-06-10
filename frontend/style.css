@@ -473,6 +473,10 @@ mark.find-current { background: var(--accent); color: #08131a; }
   padding: 8px 14px; border: 0;
   font-family: 'JetBrains Mono', monospace; font-size: 12.5px; line-height: 1.55;
   letter-spacing: 0; tab-size: 4;
+  /* CLAVE: sin ligaduras (!=, ==, ->…) ni alternativas contextuales: si no, el
+     <pre> combina glifos y el textarea no, y el cursor se desplaza carácter a
+     carácter. Así cada carácter ocupa lo mismo en ambas capas. */
+  font-variant-ligatures: none; font-feature-settings: "liga" 0, "calt" 0; font-kerning: none;
   /* SIN ajuste de línea: textarea y capa coloreada parten igual (solo en \n), así
      el cursor cae exacto sobre el color. Líneas largas → scroll horizontal. */
   white-space: pre; overflow-wrap: normal; word-break: normal; overflow: auto;
