@@ -747,6 +747,40 @@ async def files_mkdir(
     return {"ok": True, "path": target}
 
 
+def _fs_newfile(term, path):
+    sftp = term.open_sftp()
+    try:
+        try:
+            sftp.stat(path)
+            raise HTTPException(status_code=409, detail="Ya existe un archivo con ese nombre")
+        except FileNotFoundError:
+            pass
+        with sftp.open(path, "w") as fh:
+            fh.write("")   # archivo de texto vacío, listo para editar
+    finally:
+        sftp.close()
+
+
+@app.post("/files/newfile")
+async def files_newfile(
+    fsid: str = Form(...),
+    dir: str = Form(...),
+    name: str = Form(...),
+    authorization: str | None = Header(default=None),
+):
+    web_email = _bearer(authorization)
+    term = _resolve_term(fsid, web_email)
+    clean = _safe_filename(name)
+    target = posixpath.join(dir, clean)
+    try:
+        await asyncio.to_thread(_fs_newfile, term, target)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"No se pudo crear el archivo: {exc}")
+    return {"ok": True, "path": target, "name": clean}
+
+
 def _fs_delete(term, path):
     sftp = term.open_sftp()
     try:

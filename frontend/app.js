@@ -755,6 +755,38 @@
     ["viewer-ai", "viewer-edit", "viewer-wrap", "viewer-copy", "viewer-font-dec", "viewer-font-inc"].forEach((id) => {
       const b = $(id); if (b) b.style.display = isImg ? "none" : "";
     });
+    const runBtn = $("viewer-run");
+    if (runBtn) runBtn.hidden = !(tab && tab.kind !== "image" && _runnable(tab.name));
+  }
+  // ---------- Ejecutar archivos en la terminal (.py, .sh, .js…) ----------
+  const _RUN = {
+    py: "python3", pyw: "python3", sh: "bash", bash: "bash", zsh: "zsh", js: "node",
+    mjs: "node", ts: "ts-node", rb: "ruby", php: "php", pl: "perl", lua: "lua", r: "Rscript",
+  };
+  function _runnable(name) {
+    const i = (name || "").lastIndexOf(".");
+    return i >= 0 ? (_RUN[(name).slice(i + 1).toLowerCase()] || null) : null;
+  }
+  function _shQuote(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'"; }
+  async function _runFile() {
+    const tab = _viewerTabs.get(_activeTab);
+    if (!tab || tab.kind === "image") return;
+    const cmd = _runnable(tab.name);
+    if (!cmd) { showToast("No sé cómo ejecutar este tipo de archivo", true); return; }
+    // Si hay cambios sin guardar de este archivo, ofrecer guardar antes.
+    if (_editing && _editTabId === tab.id) {
+      const ta = $("viewer-edit-area");
+      if (ta && ta.value !== tab.content && window.confirm("Hay cambios sin guardar. ¿Guardar antes de ejecutar?")) {
+        await _saveEdit();
+      }
+    }
+    if (!ws || ws.readyState !== WebSocket.OPEN) { showToast("La terminal no está conectada", true); return; }
+    ws.send(cmd + " " + _shQuote(tab.path) + "\r");
+    // En pantalla completa (y si ya no estás editando), vuelve a la terminal para
+    // ver la salida; en split ya se ve. Si sigues editando, no te saco del editor.
+    if (!_splitActive() && !_editing && _activeTab !== _TAB_TERM) switchTab(_TAB_TERM);
+    try { term && term.focus(); } catch (_) {}
+    showToast("Ejecutando " + tab.name + " en la terminal");
   }
   function _escapeHtml(s) {
     return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -895,6 +927,34 @@
     _runFind();
   }
 
+  // Resaltado de sintaxis (highlight.js local). Mapa extensión → lenguaje hljs.
+  const _LANG = {
+    py: "python", pyw: "python", js: "javascript", mjs: "javascript", cjs: "javascript",
+    jsx: "javascript", ts: "typescript", tsx: "typescript", json: "json", html: "xml",
+    htm: "xml", xml: "xml", svg: "xml", vue: "xml", css: "css", scss: "scss", less: "less",
+    sh: "bash", bash: "bash", zsh: "bash", yml: "yaml", yaml: "yaml", md: "markdown",
+    markdown: "markdown", sql: "sql", c: "c", h: "c", cpp: "cpp", cc: "cpp", cxx: "cpp",
+    hpp: "cpp", java: "java", kt: "kotlin", go: "go", rs: "rust", rb: "ruby", php: "php",
+    pl: "perl", lua: "lua", r: "r", swift: "swift", toml: "ini", ini: "ini", cfg: "ini",
+    conf: "ini", env: "ini", diff: "diff", patch: "diff", make: "makefile", dockerfile: "dockerfile",
+  };
+  function _hljsLang(name) {
+    const base = (name || "").toLowerCase();
+    if (base === "dockerfile") return "dockerfile";
+    if (base === "makefile") return "makefile";
+    const i = base.lastIndexOf(".");
+    return i >= 0 ? _LANG[base.slice(i + 1)] : null;
+  }
+  function _maybeHighlight(code, tab) {
+    if (typeof hljs === "undefined" || !tab.content || tab.content.length > 300000) return;
+    const lang = _hljsLang(tab.name);
+    if (!lang || !hljs.getLanguage(lang)) return;
+    try {
+      code.innerHTML = hljs.highlight(tab.content, { language: lang, ignoreIllegals: true }).value;
+      code.classList.add("hljs");
+    } catch (_) {}
+  }
+
   function _renderViewer(tab) {
     if (!tab) return;
     _lastViewerId = tab.id;   // recordamos el último archivo visto (para el split)
@@ -909,7 +969,9 @@
     const code = $("viewer-code"); if (!code) return;
     const gut = $("viewer-gutter");
     // Texto crudo, escapado, con \n conservado (white-space: pre).
+    code.classList.remove("hljs");
     code.textContent = tab.content;
+    _maybeHighlight(code, tab);   // colorea por tipo de archivo si hay lenguaje conocido
     // Numerar líneas: una <span> por línea para que el wrap no rompa la alineación.
     const n = tab.content.length ? tab.content.split("\n").length : 1;
     const lines = new Array(n);
@@ -1490,6 +1552,8 @@
     if (copy) copy.addEventListener("click", _viewerCopyAll);
     const reload = $("viewer-reload");
     if (reload) reload.addEventListener("click", _viewerReload);
+    const runb = $("viewer-run");
+    if (runb) runb.addEventListener("click", _runFile);
     const dl = $("viewer-download");
     if (dl) dl.addEventListener("click", () => { const t = _viewerTabs.get(_activeTab); if (t) fsDownload(t.path); });
     const splitBtn = $("split-btn");
@@ -1852,6 +1916,18 @@
     if (!res.ok) { fsStatus(d.detail || "No se pudo crear", "err"); return; }
     fsList(fsPath);
   }
+  async function fsNewFile() {
+    const name = window.prompt("Nombre del archivo nuevo (p. ej. notas.txt, script.py):");
+    if (!name) return;
+    const clean = name.trim(); if (!clean) return;
+    const fd = new FormData(); fd.append("fsid", fsid); fd.append("dir", fsPath); fd.append("name", clean);
+    const res = await fetch("/files/newfile", { method: "POST", headers: fsHeaders(), body: fd });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) { fsStatus(d.detail || "No se pudo crear el archivo", "err"); return; }
+    fsStatus("Creado '" + (d.name || clean) + "' ✓", "ok");
+    fsList(fsPath);
+    viewerOpenPath(d.path, d.name || clean, 0);   // ábrelo para editar al instante
+  }
   async function fsRename(path, oldName) {
     const nu = window.prompt("Nuevo nombre o ruta (mover si pones una ruta):", oldName);
     if (nu === null) return;
@@ -1892,6 +1968,7 @@
     });
     const rf = $("files-refresh"); if (rf) rf.addEventListener("click", () => fsList(fsPath));
     _setupViewer();
+    const nf = $("files-newfile"); if (nf) nf.addEventListener("click", fsNewFile);
     const mk = $("files-mkdir"); if (mk) mk.addEventListener("click", fsMkdir);
     const ub = $("files-upload-btn"); if (ub) ub.addEventListener("click", () => $("files-input").click());
     const inp = $("files-input"); if (inp) inp.addEventListener("change", (e) => { fsUploadFiles(e.target.files); e.target.value = ""; });

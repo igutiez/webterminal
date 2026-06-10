@@ -464,6 +464,9 @@ mark.find-current { background: var(--accent); color: #08131a; }
   font-family: 'JetBrains Mono', monospace; font-size: 12.5px; line-height: 1.55;
   tab-size: 4; white-space: pre-wrap; overflow-wrap: anywhere; overflow: auto;
 }
+.vbtn.vbtn-run { color: var(--green, #50fa7b); border-color: var(--green, #50fa7b); }
+.vbtn.vbtn-run:hover { background: var(--green, #50fa7b); color: #08131a; }
+.vbtn.vbtn-run[hidden] { display: none !important; }
 .vbtn.vbtn-save { color: var(--accent); border-color: var(--accent); }
 .vbtn.vbtn-save:hover { background: var(--accent); color: #08131a; }
 .vbtn.active { background: var(--accent); color: #08131a; border-color: var(--accent); }
@@ -514,6 +517,8 @@ mark.find-current { background: var(--accent); color: #08131a; }
 .viewer-pre::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
 .viewer-pre::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 .viewer-code a { color: var(--accent); }
+/* highlight.js: usar el fondo del visor (no el del tema) y conservar el padding. */
+.viewer-code.hljs { background: transparent; padding: 8px 14px; }
 
 /* ---------- diálogos de IA (instrucción / previsualización / config) ---------- */
 .ai-overlay {
