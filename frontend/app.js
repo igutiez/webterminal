@@ -2304,11 +2304,13 @@
   function fsRefit() { setTimeout(() => { try { doFit(); } catch (_) {} }, 60); }
   function fsOpen() {
     document.body.classList.add("files-open");
+    const btn = $("files-btn"); if (btn) btn.classList.add("active");
     fsRefit();                 // la terminal se encoge: reajustar xterm
     fsList(fsPath || "");
   }
   function fsClose() {
     document.body.classList.remove("files-open");
+    const btn = $("files-btn"); if (btn) btn.classList.remove("active");
     fsRefit(); if (term) term.focus();
   }
   function fsToggle() { fsIsOpen() ? fsClose() : fsOpen(); }
