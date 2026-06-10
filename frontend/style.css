@@ -483,6 +483,10 @@ mark.find-current { background: var(--accent); color: #08131a; }
 }
 .viewer-edit-hl { z-index: 1; pointer-events: none; color: var(--text); background: transparent; }
 .viewer-edit-hl code { font: inherit; background: none; padding: 0; white-space: inherit; }
+/* CLAVE: conservar el COLOR pero forzar peso/estilo NORMALES. Si el tema pone las
+   palabras clave en negrita o los comentarios en cursiva, esos glifos miden distinto
+   que en el textarea (redonda) y el cursor se desplaza. Así todo mide igual. */
+.viewer-edit-hl, .viewer-edit-hl * { font-weight: 400 !important; font-style: normal !important; }
 .viewer-edit-area {
   z-index: 2; resize: none; outline: none; background: transparent;
   color: transparent; -webkit-text-fill-color: transparent; caret-color: var(--accent);
