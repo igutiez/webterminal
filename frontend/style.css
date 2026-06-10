@@ -122,6 +122,13 @@ label.remember input { width: auto; margin: 0; accent-color: var(--accent); curs
 /* xterm posiciona sus capas en absoluto: forzamos que rellene el contenedor */
 #terminal-container .xterm { height: 100%; width: 100%; }
 #terminal-container.drag-over { outline: 2px dashed var(--accent); outline-offset: -6px; }
+/* Segunda terminal (hueco derecho en split). Mismo aspecto que la principal. */
+#terminal-container-2 {
+  flex: 1 1 auto; min-height: 0; min-width: 0; width: auto; position: relative;
+  overflow: hidden; padding: 4px 6px; background: #282a36;
+}
+#terminal-container-2[hidden] { display: none !important; }
+#terminal-container-2 .xterm { height: 100%; width: 100%; }
 #img-upload { width: 26px; }
 
 /* Toast de subida de imagen */

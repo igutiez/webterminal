@@ -653,7 +653,7 @@
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "tmux-list" }));
   }
   function switchSession(label) {
-    _routeTermToFocus();   // en split, la terminal va al hueco enfocado
+    if (_splitActive()) { _routeSessionToFocus(label); return; }   // en split: al hueco enfocado
     currentSession = (label === "principal") ? null : label;
     _markCurrent(label);
     _activeTab = _TAB_TERM;
@@ -927,80 +927,192 @@
     return (n / (1024 * 1024)).toFixed(1) + " MB";
   }
 
-  // ---------- Vista dividida (dos huecos: terminal y/o archivo a la vez) ----------
-  // Modelo genérico: dos huecos (izquierda/derecha). Uno tiene el FOCO (borde
-  // resaltado); al pulsar una pestaña, su contenido se carga en el hueco enfocado.
-  // _termSide = lado que ocupa la terminal (el visor ocupa el otro).
-  let _split = false, _lastViewerId = null;
-  let _termSide = "left", _focusPane = "left";
-  try { if (localStorage.getItem("wt_split") === "1") _split = true; } catch (_) {}
-  try { const ts = localStorage.getItem("wt_termside"); if (ts === "left" || ts === "right") _termSide = ts; } catch (_) {}
-  function _splitActive() { return _split && _viewerTabs.size > 0 && window.innerWidth >= 640; }
-  function _viewerSide() { return _termSide === "left" ? "right" : "left"; }
-  function _persistTermSide() { try { localStorage.setItem("wt_termside", _termSide); } catch (_) {} }
-  // Orden del DOM = orden visual (la terminal a su lado, el visor al otro).
-  function _layoutPanes() {
-    const panes = $("panes"), tc = $("terminal-container"), v = $("viewer"), div = $("panes-divider");
-    if (!panes || !tc || !v || !div) return;
-    if (_termSide === "right") panes.append(v, div, tc); else panes.append(tc, div, v);
-  }
-  // Resalta el hueco enfocado (donde se cargará la próxima pestaña que pulses).
-  function _applyFocusOutline() {
-    const tc = $("terminal-container"), v = $("viewer"), split = _splitActive();
-    if (tc) tc.classList.toggle("pane-focus", split && _focusPane === _termSide);
-    if (v) v.classList.toggle("pane-focus", split && _focusPane === _viewerSide());
-  }
-  function _setFocusPane(side) { _focusPane = side; _applyFocusOutline(); }
-  // En split, decide dónde va el contenido pulsado según el hueco enfocado.
-  function _routeTermToFocus() { if (_splitActive()) { _termSide = _focusPane; _persistTermSide(); } }
-  function _routeViewerToFocus() { if (_splitActive()) { _termSide = (_focusPane === "left") ? "right" : "left"; _persistTermSide(); } }
+  // ---------- Segunda terminal (autónoma, para el hueco derecho en split) -------
+  // NO toca fsid, lista de sesiones ni estado global: solo conecta a una sesión
+  // tmux, pinta, teclea y se redimensiona. Conexión perezosa; se cierra al salir.
+  const T2 = (function () {
+    let t = null, fit = null, ws2 = null, sess = null, recon = 0, rTimer = null, closed = true;
+    function ensure() {
+      if (t) return;
+      t = new Terminal({
+        theme: { background: "#282a36", foreground: "#f8f8f2", cursor: "#f8f8f2", selectionBackground: "#44475a",
+          black: "#21222c", red: "#ff5555", green: "#50fa7b", yellow: "#f1fa8c", blue: "#6272a4",
+          magenta: "#ff79c6", cyan: "#8be9fd", white: "#f8f8f2" },
+        fontFamily: "'JetBrains Mono', monospace", fontSize: 14, lineHeight: 1.0,
+        scrollSensitivity: 3, cursorBlink: true, cursorStyle: "block", scrollback: 10000, allowProposedApi: true,
+      });
+      fit = new FitAddon.FitAddon();
+      t.loadAddon(fit);
+      t.loadAddon(new WebLinksAddon.WebLinksAddon());
+      t.open($("terminal-container-2"));
+      t.onData((d) => { if (ws2 && ws2.readyState === WebSocket.OPEN) ws2.send(d); });
+      t.onSelectionChange(() => { const s = t.getSelection(); if (s) navigator.clipboard.writeText(s).catch(() => {}); });
+    }
+    function connect() {
+      const proto = location.protocol === "https:" ? "wss" : "ws";
+      ws2 = new WebSocket(`${proto}://${location.host}/ws?token=${encodeURIComponent(jwt)}`);
+      ws2.binaryType = "arraybuffer";
+      ws2.onopen = () => { recon = 0; ws2.send(JSON.stringify({ ssh_user: sshUser, password: sshPassword, session: sess || undefined })); fitNow(); t.focus(); };
+      ws2.onmessage = (ev) => {
+        if (ev.data instanceof ArrayBuffer) { t.write(new Uint8Array(ev.data)); return; }
+        if (ev.data && ev.data[0] === "{") { try { const m = JSON.parse(ev.data); if (m && (m.type === "tmux-sessions" || m.type === "fsid")) return; } catch (_) {} }
+        t.write(ev.data);
+      };
+      ws2.onclose = (ev) => {
+        if (closed) return;
+        const c = ev ? ev.code : 0;
+        if (c === 4401 || c === 4403 || c === 4429 || c === 4400) return;   // credenciales: no reintentar
+        rTimer = setTimeout(connect, Math.min(15000, 1000 * Math.pow(2, recon++)));
+      };
+      ws2.onerror = () => { try { ws2.close(); } catch (_) {} };
+    }
+    function fitNow() {
+      if (!fit || !t) return;
+      try { fit.fit(); if (ws2 && ws2.readyState === WebSocket.OPEN) ws2.send(JSON.stringify({ type: "resize", cols: t.cols, rows: t.rows })); } catch (_) {}
+    }
+    return {
+      attach(session) {
+        ensure();
+        const ns = (session === "principal") ? null : session;
+        if (sess === ns && ws2 && !closed) { fitNow(); return; }
+        sess = ns; closed = false; clearTimeout(rTimer);
+        if (ws2) { try { ws2.onclose = null; ws2.close(); } catch (_) {} ws2 = null; }
+        connect();
+      },
+      sessionLabel() { return sess === null ? "principal" : sess; },
+      fit: fitNow,
+      focus() { if (t) t.focus(); },
+      close() { closed = true; clearTimeout(rTimer); if (ws2) { try { ws2.onclose = null; ws2.close(); } catch (_) {} ws2 = null; } sess = null; },
+    };
+  })();
 
+  // ---------- Vista dividida: dos huecos genéricos (terminal y/o archivo) -------
+  // Cada hueco (L/R) muestra UNO de tres "inquilinos": terminal principal (main),
+  // segunda terminal (sec) o el visor (viewer). Uno tiene el foco; al pulsar una
+  // pestaña, su contenido se carga en el hueco enfocado.
+  // _split NO se auto-restaura entre recargas (se activa a mano, con las sesiones
+  // ya cargadas) para no abrir un hueco de visor vacío al cargar la página.
+  let _split = false, _lastViewerId = null;
+  let _slots = { L: { kind: "main" }, R: { kind: "viewer" } };
+  let _focusPane = "R";
+  function _splitActive() { return _split && window.innerWidth >= 640; }
+  // Mantiene el estado de los huecos coherente (sin 'viewer' sin archivos, sin
+  // dos motores iguales colisionando).
+  function _normalizeSlots() {
+    if (_viewerTabs.size === 0) {
+      ["L", "R"].forEach((s) => { if (_slots[s].kind === "viewer") _slots[s] = { kind: "main" }; });
+    }
+    if (_slots.L.kind === _slots.R.kind && _slots.L.kind === "main") {
+      _slots.R = { kind: "sec", session: _otherSession() };
+    }
+    if (_slots.L.kind === _slots.R.kind && _slots.L.kind === "sec") {
+      _slots.L = { kind: "main" };
+    }
+  }
+  function _otherSlot(s) { return s === "L" ? "R" : "L"; }
+  function _slotEl(desc) {
+    if (!desc) return null;
+    if (desc.kind === "viewer") return $("viewer");
+    if (desc.kind === "sec") return $("terminal-container-2");
+    return $("terminal-container");
+  }
+  function _secSessionWanted() {
+    if (_slots.L.kind === "sec") return _slots.L.session;
+    if (_slots.R.kind === "sec") return _slots.R.session;
+    return null;
+  }
+  function _otherSession() {
+    const cur = currentSession || "principal";
+    for (const s of _sessions) { if (s.label && s.label !== cur) return s.label; }
+    return "split";   // ninguna distinta: el backend crea la sesión con new-session -A
+  }
+  function _setMainSession(label) {
+    if (label === (currentSession || "principal") && term) return;   // ya es esa: no reconectar
+    currentSession = (label === "principal") ? null : label;
+    _markCurrent(label);
+    if (term) try { term.reset(); } catch (_) {}
+    reconnectNow();
+  }
+  function _applyFocusOutline() {
+    const focusEl = _splitActive() ? _slotEl(_slots[_focusPane]) : null;
+    [$("terminal-container"), $("terminal-container-2"), $("viewer")].forEach((el) => { if (el) el.classList.toggle("pane-focus", el === focusEl); });
+  }
+  // Reconcilia el DOM (layout + visibilidad + motores) con el estado de los huecos.
   function _applyPanes() {
-    const tc = $("terminal-container"), v = $("viewer"), panes = $("panes"), div = $("panes-divider");
-    const hasViewer = _viewerTabs.size > 0;
+    const P = $("terminal-container"), S = $("terminal-container-2"), V = $("viewer"), div = $("panes-divider"), panes = $("panes");
     const split = _splitActive();
-    const onTerm = _activeTab === _TAB_TERM;
     if (panes) panes.classList.toggle("split", split);
     if (div) div.hidden = !split;
     const btn = $("split-btn"); if (btn) btn.classList.toggle("active", split);
-    if (split) {
-      if (tc) tc.style.display = "";
-      if (v) v.hidden = false;
-      _layoutPanes();
-      _applyFocusOutline();
-    } else {
-      if (tc) tc.classList.remove("pane-focus");
-      if (v) v.classList.remove("pane-focus");
-      if (onTerm || !hasViewer) {
-        if (tc) tc.style.display = "";
-        if (v) v.hidden = true;
-      } else {
-        if (tc) tc.style.display = "none";
-        if (v) v.hidden = false;
-      }
+    if (!split) {                       // pantalla completa: comportamiento clásico
+      T2.close(); if (S) S.hidden = true;
+      [P, S, V].forEach((el) => el && el.classList.remove("pane-focus"));
+      const onTerm = _activeTab === _TAB_TERM || _viewerTabs.size === 0;
+      if (P) P.style.display = onTerm ? "" : "none";
+      if (V) V.hidden = onTerm;
+      return;
     }
+    _normalizeSlots();
+    const kinds = [_slots.L.kind, _slots.R.kind];
+    const usesMain = kinds.includes("main"), usesSec = kinds.includes("sec"), usesViewer = kinds.includes("viewer");
+    if (P) P.style.display = usesMain ? "" : "none";   // la principal sigue conectada aunque se oculte (da el fsid)
+    if (S) S.hidden = !usesSec;
+    if (V) V.hidden = !usesViewer;
+    if (usesSec) T2.attach(_secSessionWanted()); else T2.close();
+    if (panes) panes.append(_slotEl(_slots.L), div, _slotEl(_slots.R));   // orden DOM = orden visual
+    _applyFocusOutline();
   }
   function _ensureTerminalVisible() { _applyPanes(); }
   function _ensureViewerVisible() { _applyPanes(); }
+  function _refitPanes() { fsRefit(); T2.fit(); }
+
+  // Carga una SESIÓN tmux en el hueco enfocado (elige motor main/sec).
+  function _routeSessionToFocus(label) {
+    const F = _focusPane, other = _otherSlot(F), ok = _slots[other].kind;
+    let kind;
+    if (ok === "main") kind = "sec";
+    else if (ok === "sec") kind = "main";
+    else kind = (_slots[F].kind === "sec") ? "sec" : "main";   // el otro es visor
+    if (kind === "main") { _slots[F] = { kind: "main" }; _setMainSession(label); }
+    else { _slots[F] = { kind: "sec", session: label }; }
+    _activeTab = _TAB_TERM;
+    _applyPanes(); _updateTabsUI(); _refitPanes();
+    if (kind === "sec") T2.focus(); else { try { term && term.focus(); } catch (_) {} }
+  }
+  // Carga un ARCHIVO (pestaña de visor) en el hueco enfocado.
+  function _routeFileToFocus(id) {
+    const F = _focusPane, other = _otherSlot(F);
+    if (_slots[other].kind === "viewer") _slots[other] = { kind: "main" };   // no caben dos visores
+    _slots[F] = { kind: "viewer" };
+    _activeTab = id;
+    _renderViewer(_viewerTabs.get(id));
+    _applyPanes(); _updateTabsUI(); _refitPanes();
+  }
   function _toggleSplit() {
-    if (_viewerTabs.size === 0) { showToast("Abre un archivo para usar la vista dividida.", true); return; }
     _split = !_split;
-    try { localStorage.setItem("wt_split", _split ? "1" : "0"); } catch (_) {}
     if (_split) {
-      _focusPane = _viewerSide();   // al activar, foco en el lado del archivo
-      const lv = _viewerTabs.get(_lastViewerId) || _viewerTabs.values().next().value;
+      if (_viewerTabs.size > 0) { _slots = { L: { kind: "main" }, R: { kind: "viewer" } }; }
+      else { _slots = { L: { kind: "main" }, R: { kind: "sec", session: _otherSession() } }; }
+      _focusPane = "R";
       _applyPanes();
-      if (lv) _renderViewer(lv);
+      if (_slots.R.kind === "viewer") { const lv = _viewerTabs.get(_lastViewerId) || _viewerTabs.values().next().value; if (lv) { _activeTab = lv.id; _renderViewer(lv); } }
     } else {
+      _slots = { L: { kind: "main" }, R: { kind: "viewer" } };
       _applyPanes();
     }
-    fsRefit();
+    _refitPanes();
   }
   // Clic en un hueco = enfocarlo (ahí irá la siguiente pestaña que pulses).
   function _setupPaneFocus() {
-    const tc = $("terminal-container"), v = $("viewer");
-    if (tc) tc.addEventListener("mousedown", () => { if (_splitActive()) _setFocusPane(_termSide); }, true);
-    if (v) v.addEventListener("mousedown", () => { if (_splitActive()) _setFocusPane(_viewerSide()); }, true);
+    const map = [["terminal-container"], ["terminal-container-2"], ["viewer"]];
+    map.forEach(([id]) => {
+      const el = $(id);
+      if (el) el.addEventListener("mousedown", () => {
+        if (!_splitActive()) return;
+        _focusPane = (_slotEl(_slots.L) === el) ? "L" : "R";
+        _applyFocusOutline();
+      }, true);
+    });
   }
   function _setupSplitDrag() {
     const div = $("panes-divider"), panes = $("panes");
@@ -1011,13 +1123,12 @@
       let pct = ((clientX - r.left) / r.width) * 100;
       pct = Math.max(20, Math.min(80, pct));
       panes.style.setProperty("--split", pct + "%");
-      fsRefit();
+      _refitPanes();
     };
     div.addEventListener("mousedown", (e) => { dragging = true; div.classList.add("dragging"); document.body.style.userSelect = "none"; e.preventDefault(); });
     window.addEventListener("mousemove", (e) => { if (dragging) onMove(e.clientX); });
-    window.addEventListener("mouseup", () => { if (dragging) { dragging = false; div.classList.remove("dragging"); document.body.style.userSelect = ""; fsRefit(); } });
-    // Al pasar a móvil/escritorio, recalcular el reparto de paneles.
-    window.addEventListener("resize", () => { if (_split) { _applyPanes(); fsRefit(); } });
+    window.addEventListener("mouseup", () => { if (dragging) { dragging = false; div.classList.remove("dragging"); document.body.style.userSelect = ""; _refitPanes(); } });
+    window.addEventListener("resize", () => { if (_split) { _applyPanes(); _refitPanes(); } });
   }
 
   // Devuelve el markup de un icono del sprite local (#icon-sprite en index.html).
@@ -1088,7 +1199,11 @@
     if (!_tryExitEdit()) return;   // cambios sin guardar → confirmar antes de salir
     if (_findActive) _resetFind();
     // En split, la pestaña pulsada se carga en el hueco enfocado.
-    if (_splitActive()) { if (id === _TAB_TERM) _routeTermToFocus(); else _routeViewerToFocus(); }
+    if (_splitActive()) {
+      if (id === _TAB_TERM) _routeSessionToFocus(currentSession || "principal");
+      else _routeFileToFocus(id);
+      return;
+    }
     _activeTab = id;
     if (id === _TAB_TERM) {
       _ensureTerminalVisible();
@@ -1100,7 +1215,6 @@
     } else {
       _ensureViewerVisible();
       _renderViewer(_viewerTabs.get(id));
-      if (_splitActive()) fsRefit();   // la terminal pudo cambiar de lado/tamaño
     }
     _updateTabsUI();
   }
@@ -1110,6 +1224,20 @@
     if (_findActive) _resetFind();
     const wasActive = _activeTab === id;
     _viewerTabs.delete(id);
+    // En split: si el hueco del visor se queda sin archivos, conviértelo en terminal.
+    if (_splitActive() && _viewerTabs.size === 0) {
+      if (_slots.L.kind === "viewer") _slots.L = { kind: "main" };
+      if (_slots.R.kind === "viewer") _slots.R = { kind: "main" };
+      _activeTab = _TAB_TERM;
+      _applyPanes(); _updateTabsUI(); _refitPanes();
+      return;
+    }
+    if (_splitActive()) {   // quedan archivos: muestra otro en el hueco del visor
+      const next = _viewerTabs.keys().next();
+      if (!next.done) { _activeTab = next.value; _renderViewer(_viewerTabs.get(next.value)); }
+      _applyPanes(); _updateTabsUI();
+      return;
+    }
     if (wasActive) {
       // Si quedan otras pestañas de visor, activa la primera; si no, vuelve a Terminal.
       const next = _viewerTabs.keys().next();
@@ -1132,10 +1260,8 @@
     if (_isImageName(name)) {
       const id = "v" + (++_tabSeq);
       _viewerTabs.set(id, { id, name, path, kind: "image", url: _fileURL(path), size: sizeHint || 0, content: "" });
-      _activeTab = id;
-      _ensureViewerVisible();
-      _renderViewer(_viewerTabs.get(id));
-      _updateTabsUI();
+      if (_splitActive()) { _routeFileToFocus(id); }
+      else { _activeTab = id; _ensureViewerVisible(); _renderViewer(_viewerTabs.get(id)); _updateTabsUI(); }
       fsStatus("Imagen '" + name + "' ✓", "ok");
       return;
     }
@@ -1152,10 +1278,8 @@
       if (!res.ok) { fsStatus(d.detail || ("Error " + res.status), "err"); return; }
       const id = "v" + (++_tabSeq);
       _viewerTabs.set(id, { id, name: d.name || name, path, content: d.content || "", mtime: d.mtime || 0 });
-      _activeTab = id;
-      _ensureViewerVisible();
-      _renderViewer(_viewerTabs.get(id));
-      _updateTabsUI();
+      if (_splitActive()) { _routeFileToFocus(id); }
+      else { _activeTab = id; _ensureViewerVisible(); _renderViewer(_viewerTabs.get(id)); _updateTabsUI(); }
       fsStatus("Abierto '" + d.name + "' ✓", "ok");
       // ¿Quedó un borrador sin guardar de una sesión anterior? Ofrecer recuperarlo.
       const tabNew = _viewerTabs.get(id);
