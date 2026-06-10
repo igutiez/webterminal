@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
   <link href="https://unpkg.com/xterm@5.3.0/css/xterm.css" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=6" />
+  <link rel="stylesheet" href="style.css?v=7" />
   <script src="https://unpkg.com/xterm@5.3.0/lib/xterm.js"></script>
   <script src="https://unpkg.com/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
 </head>
@@ -126,7 +126,21 @@
   </div>
 
   <input id="files-input" type="file" accept="image/*" hidden />
+  <!-- Modal propio: sustituye a los prompt/confirm nativos del navegador -->
+  <div id="ui-modal" class="ui-modal" hidden>
+    <div class="ui-modal-box" role="dialog" aria-modal="true" aria-labelledby="ui-modal-title">
+      <div class="ui-modal-icon"><svg class="ic"><use href="#ic-terminal"/></svg></div>
+      <div id="ui-modal-title" class="ui-modal-title"></div>
+      <div id="ui-modal-msg" class="ui-modal-msg"></div>
+      <input id="ui-modal-input" class="ui-modal-input" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" />
+      <div class="ui-modal-actions">
+        <button id="ui-modal-cancel" class="ui-modal-btn" type="button"></button>
+        <button id="ui-modal-ok" class="ui-modal-btn primary" type="button"></button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" class="toast"></div>
-  <script src="app.js?v=8"></script>
+  <script src="app.js?v=9"></script>
 </body>
 </html>

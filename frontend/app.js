@@ -222,6 +222,61 @@
     toastTimer = setTimeout(() => { t.className = "toast"; }, 3500);
   }
 
+  // ---------- Modal propio (sustituye a los prompt/confirm nativos) ----------
+  // uiPrompt(opts)  → Promise<string|null>  (null = cancelado)
+  // uiConfirm(opts) → Promise<boolean>
+  // opts: { title, message?, icon? (id del sprite sin "ic-"), value?, placeholder?,
+  //         ok?, cancel?, danger? }
+  const _uiModal = (() => {
+    let resolver = null, prevFocus = null, bound = false;
+    const isPrompt = () => !$("ui-modal-input").hidden;
+    function close(val) {
+      const m = $("ui-modal"); if (!m || m.hidden) return;
+      m.hidden = true;
+      const r = resolver; resolver = null;
+      if (prevFocus && prevFocus.focus) { try { prevFocus.focus(); } catch (_) {} }
+      prevFocus = null;
+      if (r) r(val);
+    }
+    function cancel() { close(isPrompt() ? null : false); }
+    function accept() { close(isPrompt() ? $("ui-modal-input").value : true); }
+    function bind() {
+      if (bound) return; bound = true;
+      const m = $("ui-modal");
+      $("ui-modal-ok").addEventListener("click", accept);
+      $("ui-modal-cancel").addEventListener("click", cancel);
+      m.addEventListener("mousedown", (e) => { if (e.target === m) cancel(); });
+      m.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); cancel(); }
+        else if (e.key === "Enter") { e.preventDefault(); accept(); }
+      });
+    }
+    function open(opts) {
+      const m = $("ui-modal");
+      if (!m) return Promise.resolve(opts.input ? null : false);   // sin DOM: como cancelar
+      bind();
+      if (resolver) cancel();                                      // uno cada vez
+      prevFocus = document.activeElement;
+      $("ui-modal-title").textContent = opts.title || "";
+      const msg = $("ui-modal-msg");
+      msg.textContent = opts.message || ""; msg.hidden = !opts.message;
+      const use = m.querySelector(".ui-modal-icon use");
+      if (use) use.setAttribute("href", "#ic-" + (opts.icon || "terminal"));
+      m.querySelector(".ui-modal-box").classList.toggle("danger", !!opts.danger);
+      const inp = $("ui-modal-input");
+      inp.hidden = !opts.input;
+      if (opts.input) { inp.value = opts.value || ""; inp.placeholder = opts.placeholder || ""; }
+      $("ui-modal-ok").textContent = opts.ok || "Aceptar";
+      $("ui-modal-cancel").textContent = opts.cancel || "Cancelar";
+      m.hidden = false;
+      setTimeout(() => { try { (opts.input ? inp : $("ui-modal-ok")).focus(); if (opts.input) inp.select(); } catch (_) {} }, 0);
+      return new Promise((res) => { resolver = res; });
+    }
+    return { open };
+  })();
+  function uiPrompt(opts) { return _uiModal.open({ ...opts, input: true }); }
+  function uiConfirm(opts) { return _uiModal.open({ ...opts, input: false }); }
+
   async function uploadFile(file) {
     if (!file || !jwt) return;
     let name = file.name;
@@ -523,7 +578,9 @@
       }
       // Buscar: Ctrl+Shift+F
       if (ev.ctrlKey && ev.shiftKey && ev.code === "KeyF") {
-        const q = window.prompt("Buscar:"); if (q) searchAddon.findNext(q); return false;
+        uiPrompt({ icon: "terminal", title: "Buscar en la terminal", placeholder: "texto a buscar…" })
+          .then((q) => { if (q) searchAddon.findNext(q); });
+        return false;
       }
       return true;
     });
@@ -669,8 +726,12 @@
     reconnectNow();          // al reconectar (fsid) se vuelve a pedir la lista real
     _updateTabsUI();
   }
-  function newSession() {
-    const raw = window.prompt("Nombre de la nueva sesión (p.ej. logs, pruebas):", "");
+  async function newSession() {
+    const raw = await uiPrompt({
+      icon: "plus", title: "Nueva sesión de terminal",
+      message: "Se crea una sesión tmux persistente: sobrevive aunque cierres el navegador.",
+      placeholder: "p. ej. logs, pruebas…", ok: "Crear",
+    });
     if (raw === null) return;
     const label = _slugLabel(raw.trim());
     if (!label) return;
@@ -825,7 +886,11 @@
     // Si hay cambios sin guardar de este archivo, ofrecer guardar antes.
     if (_editing && _editTabId === tab.id) {
       const ta = $("viewer-edit-area");
-      if (ta && ta.value !== tab.content && window.confirm("Hay cambios sin guardar. ¿Guardar antes de ejecutar?")) {
+      if (ta && ta.value !== tab.content && await uiConfirm({
+        icon: "play", title: "Cambios sin guardar",
+        message: "¿Guardar el archivo antes de ejecutarlo?",
+        ok: "Guardar y ejecutar", cancel: "Ejecutar sin guardar",
+      })) {
         await _saveEdit();
       }
     }
@@ -1362,7 +1427,11 @@
   async function _openPreview() {
     let last = "8000";
     try { last = localStorage.getItem("wt_preview_port") || "8000"; } catch (_) {}
-    const raw = window.prompt("Puerto local de tu webapp (127.0.0.1:PUERTO):", last);
+    const raw = await uiPrompt({
+      icon: "app-window", title: "Previsualizar webapp local",
+      message: "Puerto de 127.0.0.1 donde está sirviendo tu aplicación.",
+      value: last, placeholder: "8000", ok: "Abrir preview",
+    });
     if (raw === null) return;
     const port = parseInt(String(raw).trim(), 10);
     if (!(port >= 1 && port <= 65535)) { showToast("Puerto no válido", true); return; }
@@ -1618,9 +1687,9 @@
     _persistOpenTabs();   // recuerda los archivos abiertos para reabrirlos tras recargar
   }
 
-  function switchTab(id) {
+  async function switchTab(id) {
     if (id !== _TAB_TERM && !_viewerTabs.has(id)) return;
-    if (!_tryExitEdit()) return;   // cambios sin guardar → confirmar antes de salir
+    if (!await _tryExitEdit()) return;   // cambios sin guardar → confirmar antes de salir
     if (_findActive) _resetFind();
     // En split, la pestaña pulsada se carga en el hueco enfocado.
     if (_splitActive()) {
@@ -1643,8 +1712,8 @@
     _updateTabsUI();
   }
 
-  function closeViewerTab(id) {
-    if (_editing && _editTabId === id && !_tryExitEdit()) return;
+  async function closeViewerTab(id) {
+    if (_editing && _editTabId === id && !await _tryExitEdit()) return;
     if (_findActive) _resetFind();
     const wasActive = _activeTab === id;
     _viewerTabs.delete(id);
@@ -1676,7 +1745,7 @@
   // API pública: abre un archivo de texto en una pestaña nueva (o activa la
   // existente si ya está abierto ese mismo path).
   async function viewerOpenPath(path, name, sizeHint) {
-    if (!_tryExitEdit()) return;   // no abrir otro archivo con cambios sin guardar
+    if (!await _tryExitEdit()) return;   // no abrir otro archivo con cambios sin guardar
     if (!fsid) { fsStatus("Abre la terminal primero (el visor usa tu sesión SSH).", "err"); return; }
     // ¿Ya hay una pestaña abierta con este path? Reutilízala.
     for (const t of _viewerTabs.values()) if (t.path === path) { switchTab(t.id); fsStatus("'" + name + "' ya estaba abierto ✓", "ok"); return; }
@@ -1709,7 +1778,11 @@
       const tabNew = _viewerTabs.get(id);
       const draft = _getDraft(tabNew);
       if (draft != null && draft !== tabNew.content) {
-        if (window.confirm("Tienes cambios sin guardar de antes en “" + tabNew.name + "”. ¿Recuperarlos para seguir editando?")) {
+        if (await uiConfirm({
+          icon: "pencil", title: "Borrador recuperado",
+          message: "Tienes cambios sin guardar de una sesión anterior en “" + tabNew.name + "”. ¿Recuperarlos para seguir editando?",
+          ok: "Recuperar", cancel: "Descartar",
+        })) {
           _enterEdit();
           const ta = $("viewer-edit-area"); if (ta) ta.value = draft;
           _syncEditorHL();
@@ -1736,7 +1809,11 @@
     }
     if (_editing) {
       // No pisamos cambios sin guardar a la brava: que el usuario decida.
-      if (!confirm("Hay cambios sin guardar en la edición. ¿Descartarlos y recargar desde el disco?")) return;
+      if (!await uiConfirm({
+        icon: "rotate-cw", title: "Cambios sin guardar",
+        message: "¿Descartar lo editado y recargar la versión del disco?",
+        ok: "Descartar y recargar", danger: true,
+      })) return;
       _clearDraft(t);
       _exitEdit();
     }
@@ -1815,12 +1892,16 @@
   }
   // Sale del modo edición; si hay cambios sin guardar, pide confirmación.
   // Devuelve true si se pudo salir (o no se estaba editando).
-  function _tryExitEdit() {
+  async function _tryExitEdit() {
     if (!_editing) return true;
     const ta = $("viewer-edit-area");
     const tab = _viewerTabs.get(_editTabId);
     const dirty = tab && ta && ta.value !== tab.content;
-    if (dirty && !window.confirm("Tienes cambios sin guardar. ¿Descartarlos?")) return false;
+    if (dirty && !await uiConfirm({
+      icon: "pencil", title: "Cambios sin guardar",
+      message: "Si sales ahora, lo editado se descarta.",
+      ok: "Descartar cambios", cancel: "Seguir editando", danger: true,
+    })) return false;
     if (tab) _clearDraft(tab);   // descarte explícito: fuera el borrador
     _exitEdit();
     return true;
@@ -1867,11 +1948,11 @@
     let r = await _writeFile(tab.path, content, tab.mtime);
     // Cambio externo: el archivo se tocó por fuera desde que lo abriste.
     if (!r.ok && r.conflict) {
-      const ok = window.confirm(
-        "“" + tab.name + "” ha cambiado fuera del editor desde que lo abriste.\n\n" +
-        "Aceptar = sobrescribir con tu versión (se pierde lo de fuera).\n" +
-        "Cancelar = no guardar (luego puedes pulsar el botón de recargar para traer la versión del disco)."
-      );
+      const ok = await uiConfirm({
+        icon: "save", title: "El archivo ha cambiado en el disco",
+        message: "“" + tab.name + "” se ha modificado fuera del editor desde que lo abriste. Sobrescribir pisa esos cambios externos; si cancelas, puedes recargar para verlos.",
+        ok: "Sobrescribir", cancel: "No guardar", danger: true,
+      });
       if (!ok) { if (sv) sv.disabled = false; showToast("Guardado cancelado: revisa los cambios externos con el botón de recargar", true); return; }
       r = await _writeFile(tab.path, content, null);   // forzar sobrescritura
     }
@@ -2261,7 +2342,11 @@
     fsList(fsPath);
   }
   async function fsMkdir() {
-    const name = window.prompt("Nombre de la carpeta nueva:");
+    const name = await uiPrompt({
+      icon: "folder-plus", title: "Nueva carpeta",
+      message: "Se crea en " + (fsPath || "el directorio actual") + ".",
+      placeholder: "nombre de la carpeta", ok: "Crear",
+    });
     if (!name) return;
     const fd = new FormData(); fd.append("fsid", fsid); fd.append("dir", fsPath); fd.append("name", name);
     const res = await fetch("/files/mkdir", { method: "POST", headers: fsHeaders(), body: fd });
@@ -2270,7 +2355,11 @@
     fsList(fsPath);
   }
   async function fsNewFile() {
-    const name = window.prompt("Nombre del archivo nuevo (p. ej. notas.txt, script.py):");
+    const name = await uiPrompt({
+      icon: "file-plus", title: "Nuevo archivo",
+      message: "Se crea vacío y se abre en el editor al instante.",
+      placeholder: "p. ej. notas.txt, script.py", ok: "Crear y abrir",
+    });
     if (!name) return;
     const clean = name.trim(); if (!clean) return;
     const fd = new FormData(); fd.append("fsid", fsid); fd.append("dir", fsPath); fd.append("name", clean);
@@ -2282,7 +2371,11 @@
     viewerOpenPath(d.path, d.name || clean, 0);   // ábrelo para editar al instante
   }
   async function fsRename(path, oldName) {
-    const nu = window.prompt("Nuevo nombre o ruta (mover si pones una ruta):", oldName);
+    const nu = await uiPrompt({
+      icon: "pencil", title: "Renombrar o mover",
+      message: "Escribe un nombre nuevo, o una ruta con / para moverlo.",
+      value: oldName, ok: "Renombrar",
+    });
     if (nu === null) return;
     const val = nu.trim(); if (!val || val === oldName) return;
     const dst = val.indexOf("/") >= 0 ? (val[0] === "/" ? val : fsJoin(fsPath, val)) : fsJoin(fsPath, val);
@@ -2293,7 +2386,11 @@
     fsList(fsPath);
   }
   async function fsDelete(path, name, isDir) {
-    if (!window.confirm("¿Borrar " + (isDir ? "la carpeta" : "el archivo") + ' "' + name + '"' + (isDir ? " y todo su contenido" : "") + "?")) return;
+    if (!await uiConfirm({
+      icon: "trash-2", title: "Borrar " + (isDir ? "carpeta" : "archivo"),
+      message: "¿Borrar “" + name + "”" + (isDir ? " y todo su contenido" : "") + "? No se puede deshacer.",
+      ok: "Borrar", danger: true,
+    })) return;
     const fd = new FormData(); fd.append("fsid", fsid); fd.append("path", path);
     const res = await fetch("/files/delete", { method: "POST", headers: fsHeaders(), body: fd });
     const d = await res.json().catch(() => ({}));

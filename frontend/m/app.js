@@ -57,6 +57,53 @@
     d.className = "dot " + (state === "connected" ? "dot-green" : state === "reconnecting" ? "dot-yellow" : "dot-red");
   }
 
+  // ---------- Modal propio (sustituye a los prompt/confirm nativos) ----------
+  const _uiModal = (() => {
+    let resolver = null, bound = false;
+    const isPrompt = () => !$("ui-modal-input").hidden;
+    function close(val) {
+      const m = $("ui-modal"); if (!m || m.hidden) return;
+      m.hidden = true;
+      const r = resolver; resolver = null;
+      if (r) r(val);
+    }
+    function cancel() { close(isPrompt() ? null : false); }
+    function accept() { close(isPrompt() ? $("ui-modal-input").value : true); }
+    function bind() {
+      if (bound) return; bound = true;
+      const m = $("ui-modal");
+      $("ui-modal-ok").addEventListener("click", accept);
+      $("ui-modal-cancel").addEventListener("click", cancel);
+      m.addEventListener("mousedown", (e) => { if (e.target === m) cancel(); });
+      m.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") { e.preventDefault(); cancel(); }
+        else if (e.key === "Enter") { e.preventDefault(); accept(); }
+      });
+    }
+    function open(opts) {
+      const m = $("ui-modal");
+      if (!m) return Promise.resolve(opts.input ? null : false);
+      bind();
+      if (resolver) cancel();
+      $("ui-modal-title").textContent = opts.title || "";
+      const msg = $("ui-modal-msg");
+      msg.textContent = opts.message || ""; msg.hidden = !opts.message;
+      const use = m.querySelector(".ui-modal-icon use");
+      if (use) use.setAttribute("href", "#ic-" + (opts.icon || "terminal"));
+      m.querySelector(".ui-modal-box").classList.toggle("danger", !!opts.danger);
+      const inp = $("ui-modal-input");
+      inp.hidden = !opts.input;
+      if (opts.input) { inp.value = opts.value || ""; inp.placeholder = opts.placeholder || ""; }
+      $("ui-modal-ok").textContent = opts.ok || "Aceptar";
+      $("ui-modal-cancel").textContent = opts.cancel || "Cancelar";
+      m.hidden = false;
+      setTimeout(() => { try { (opts.input ? inp : $("ui-modal-ok")).focus(); } catch (_) {} }, 0);
+      return new Promise((res) => { resolver = res; });
+    }
+    return { open };
+  })();
+  function uiPrompt(opts) { return _uiModal.open({ ...opts, input: true }); }
+
   // ---------- Boot ----------
   window.addEventListener("DOMContentLoaded", async () => {
     // Si llega un token de reset, esto es cosa de escritorio: redirige.
@@ -322,8 +369,12 @@
     reconnectNow();
     closeSheet("sheet-sessions");
   }
-  function newSession() {
-    const raw = window.prompt("Nombre de la nueva sesión (p. ej. logs, pruebas):", "");
+  async function newSession() {
+    const raw = await uiPrompt({
+      icon: "plus", title: "Nueva sesión de terminal",
+      message: "Se crea una sesión tmux persistente: sobrevive aunque cierres la app.",
+      placeholder: "p. ej. logs, pruebas…", ok: "Crear",
+    });
     if (raw === null) return;
     const label = _slug(raw.trim()); if (!label) return;
     switchSession(label);

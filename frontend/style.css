@@ -698,3 +698,49 @@ mark.find-current { background: var(--accent); color: var(--accent-ink); }
   .ai-diff { flex-direction: column; }
   .ai-pre { max-height: 32vh; }
 }
+
+/* ---------- Modal propio (sustituye a los prompt/confirm nativos) ---------- */
+.ui-modal {
+  position: fixed; inset: 0; z-index: 120; display: flex; align-items: center; justify-content: center;
+  background: rgba(10,10,26,.55); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); padding: 16px;
+}
+.ui-modal[hidden] { display: none !important; }
+.ui-modal-box {
+  width: 100%; max-width: 420px;
+  background: linear-gradient(180deg, rgba(255,255,255,.03), transparent 30%), var(--panel);
+  border: 1px solid var(--border); border-radius: var(--r-l);
+  box-shadow: var(--shadow-2), inset 0 1px 0 rgba(255,255,255,.05);
+  padding: 20px;
+}
+.ui-modal-icon {
+  width: 38px; height: 38px; border-radius: var(--r-m); display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(var(--accent-rgb), .12); border: 1px solid rgba(var(--accent-rgb), .3); color: var(--accent);
+  font-size: 17px; margin-bottom: 12px;
+}
+.ui-modal-box.danger .ui-modal-icon { background: rgba(255, 93, 93, .1); border-color: rgba(255, 93, 93, .35); color: var(--red); }
+.ui-modal-title { font-weight: 700; font-size: 15.5px; color: var(--text); font-family: var(--font-ui); }
+.ui-modal-msg { margin-top: 6px; font-size: 13px; line-height: 1.5; color: var(--muted); font-family: var(--font-ui); }
+.ui-modal-msg[hidden] { display: none; }
+.ui-modal-input {
+  width: 100%; margin-top: 14px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--r-s);
+  padding: 10px 12px; color: var(--text); font-family: var(--font-mono); font-size: 13.5px; outline: none;
+  transition: border-color .15s, box-shadow .15s;
+}
+.ui-modal-input:focus { border-color: var(--accent); box-shadow: var(--ring); }
+.ui-modal-input[hidden] { display: none; }
+.ui-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.ui-modal-btn {
+  padding: 8px 16px; border-radius: var(--r-s); border: 1px solid var(--border);
+  background: var(--panel-2); color: var(--text); cursor: pointer; font-family: var(--font-ui); font-size: 13.5px; font-weight: 600;
+  transition: background-color .15s, border-color .15s, color .15s, filter .15s;
+}
+.ui-modal-btn:hover { border-color: var(--accent); color: var(--accent); background: rgba(var(--accent-rgb), .08); }
+.ui-modal-btn.primary { background: var(--grad-accent); border-color: transparent; color: var(--accent-ink); }
+.ui-modal-btn.primary:hover { filter: brightness(1.07); color: var(--accent-ink); background: var(--grad-accent); }
+.ui-modal-box.danger .ui-modal-btn.primary {
+  background: linear-gradient(180deg, #ff8585, #e64d4d); color: #2a0808;
+}
+/* En pantallas estrechas el modal baja como una hoja, más a mano del pulgar. */
+@media (max-width: 640px) {
+  .ui-modal { align-items: flex-end; padding-bottom: calc(20px + env(safe-area-inset-bottom)); }
+}

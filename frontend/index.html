@@ -29,7 +29,7 @@
   <script src="https://unpkg.com/xterm-addon-canvas@0.5.0/lib/xterm-addon-canvas.js"></script>
 
   <link rel="stylesheet" href="hljs-dracula.css?v=1" />
-  <link rel="stylesheet" href="style.css?v=58" />
+  <link rel="stylesheet" href="style.css?v=59" />
 </head>
 <body>
   <!-- Sprite de iconos SVG (local, mismo aspecto en Safari/Chrome/iOS/Android). Lucide, ISC. -->
@@ -352,7 +352,21 @@
     <button id="img-modal-close" class="img-modal-close" title="Cerrar (Esc)"><svg class="ic"><use href="#ic-x"/></svg></button>
   </div>
 
+  <!-- Modal propio: sustituye a los prompt/confirm nativos del navegador -->
+  <div id="ui-modal" class="ui-modal" hidden>
+    <div class="ui-modal-box" role="dialog" aria-modal="true" aria-labelledby="ui-modal-title">
+      <div class="ui-modal-icon"><svg class="ic"><use href="#ic-terminal"/></svg></div>
+      <div id="ui-modal-title" class="ui-modal-title"></div>
+      <div id="ui-modal-msg" class="ui-modal-msg"></div>
+      <input id="ui-modal-input" class="ui-modal-input" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" />
+      <div class="ui-modal-actions">
+        <button id="ui-modal-cancel" class="ui-modal-btn" type="button"></button>
+        <button id="ui-modal-ok" class="ui-modal-btn primary" type="button"></button>
+      </div>
+    </div>
+  </div>
+
   <script src="highlight.min.js?v=1"></script>
-  <script src="app.js?v=61"></script>
+  <script src="app.js?v=62"></script>
 </body>
 </html>
