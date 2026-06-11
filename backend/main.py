@@ -216,10 +216,14 @@ async def account_update(
 
 @app.get("/preferences")
 async def preferences_get(authorization: str | None = Header(default=None)):
-    """Preferencias de la cuenta: tema y alias humanos de hosts remotos. Se llama
-    tras el login para aplicar el look&feel y los nombres antes de abrir la terminal."""
+    """Preferencias de la cuenta: tema, alias de hosts remotos y alias de sesiones.
+    Se llama tras el login para aplicar el look&feel antes de abrir la terminal."""
     email = _bearer(authorization)
-    return {"theme": db.get_theme(email), "aliases": db.get_aliases(email)}
+    return {
+        "theme": db.get_theme(email),
+        "aliases": db.get_aliases(email),          # {hostname: nombre amigable}
+        "sessionAliases": db.get_session_aliases(email),  # {etiqueta tmux: nombre}
+    }
 
 
 @app.post("/preferences/alias")
@@ -228,7 +232,8 @@ async def preferences_alias(
     host: str = Form(...),
     name: str = Form(default=""),
 ):
-    """Pone (o borra, si name viene vacío) el alias humano de un host remoto."""
+    """Pone (o borra, si name vacío) el alias humano de un host remoto.
+    Persiste por HOSTNAME: aunque cambie el título del panel, el alias sigue."""
     email = _bearer(authorization)
     host = (host or "").strip()[:80]
     name = (name or "").strip()[:40]
@@ -236,8 +241,26 @@ async def preferences_alias(
         raise HTTPException(status_code=400, detail="Falta el host")
     if not db.set_alias(email, host, name):
         raise HTTPException(status_code=400, detail="No se pudo guardar el alias")
-    log.info("alias set web=%s host=%s name=%s", email, host, name or "(borrado)")
+    log.info("host alias set web=%s host=%s name=%s", email, host, name or "(borrado)")
     return {"ok": True, "aliases": db.get_aliases(email)}
+
+
+@app.post("/preferences/session-alias")
+async def preferences_session_alias(
+    authorization: str | None = Header(default=None),
+    label: str = Form(...),
+    name: str = Form(default=""),
+):
+    """Pone (o borra) el nombre de una sesión/pestaña."""
+    email = _bearer(authorization)
+    label = (label or "").strip()[:80]
+    name = (name or "").strip()[:40]
+    if not label:
+        raise HTTPException(status_code=400, detail="Falta la etiqueta de sesión")
+    if not db.set_session_alias(email, label, name):
+        raise HTTPException(status_code=400, detail="No se pudo guardar")
+    log.info("session alias set web=%s label=%s name=%s", email, label, name or "(borrado)")
+    return {"ok": True, "sessionAliases": db.get_session_aliases(email)}
 
 
 @app.post("/preferences")

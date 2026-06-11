@@ -43,6 +43,9 @@ def init_db():
         # Alias humanos para hosts remotos: JSON {hostname: "nombre amigable"}.
         if "host_aliases" not in cols:
             c.execute("ALTER TABLE users ADD COLUMN host_aliases TEXT")
+        # Alias humanos para sesiones/pestañas: JSON {etiqueta_tmux: "nombre"}.
+        if "session_aliases" not in cols:
+            c.execute("ALTER TABLE users ADD COLUMN session_aliases TEXT")
 
 
 def get_theme(email: str):
@@ -94,6 +97,45 @@ def set_alias(email: str, host: str, name: str) -> bool:
         else:
             d.pop(host, None)
         c.execute("UPDATE users SET host_aliases = ? WHERE email = ?", (json.dumps(d), email))
+        return True
+
+
+def get_session_aliases(email: str) -> dict:
+    """Mapa {etiqueta_tmux: nombre amigable} de las pestañas/sesiones del usuario."""
+    raw = (get_user(email) or {}).get("session_aliases")
+    if not raw:
+        return {}
+    try:
+        d = json.loads(raw)
+        return d if isinstance(d, dict) else {}
+    except (ValueError, TypeError):
+        return {}
+
+
+def set_session_alias(email: str, label: str, name: str) -> bool:
+    """Pone (o borra, si name vacío) el alias de una sesión/pestaña."""
+    email = (email or "").strip().lower()
+    label = (label or "").strip()
+    name = (name or "").strip()
+    if not label:
+        return False
+    with _conn() as c:
+        row = c.execute("SELECT session_aliases FROM users WHERE email = ?", (email,)).fetchone()
+        if row is None:
+            return False
+        try:
+            d = json.loads(row["session_aliases"]) if row["session_aliases"] else {}
+            if not isinstance(d, dict):
+                d = {}
+        except (ValueError, TypeError):
+            d = {}
+        if name:
+            if len(d) >= 200 and label not in d:
+                return False
+            d[label] = name
+        else:
+            d.pop(label, None)
+        c.execute("UPDATE users SET session_aliases = ? WHERE email = ?", (json.dumps(d), email))
         return True
 
 

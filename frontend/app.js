@@ -19,7 +19,8 @@
   let awayMode = false;
   let remoteHost = null;
   let _focusedTerm = "main";
-  let aliases = {};   // {etiqueta de sesión tmux: "nombre humano"} guardado en la cuenta
+  let aliases = {};         // {hostname: "nombre amigable"} — alias de SERVIDOR remoto
+  let sessionAliases = {};  // {etiqueta tmux: "nombre"} — alias de SESIÓN/pestaña
 
   const $ = (id) => document.getElementById(id);
   const SCREENS = ["login-screen", "forgot-screen", "reset-screen", "ssh-screen", "account-screen", "terminal-screen"];
@@ -706,6 +707,7 @@
       if (res.ok) {
         const d = await res.json();
         if (d.aliases && typeof d.aliases === "object") aliases = d.aliases;
+        if (d.sessionAliases && typeof d.sessionAliases === "object") sessionAliases = d.sessionAliases;
         if (d.theme && THEMES[d.theme]) theme = d.theme;
       }
     } catch (_) {}
@@ -731,44 +733,51 @@
     updateAwayBadge();
   }
   function resetAway() { awayMode = false; remoteHost = null; if (term) term.options.theme = termPalette(false); updateAwayBadge(); }
-  // Estado de la terminal con el foco (main o la 2ª del split): si es remota, su host,
-  // y la etiqueta de su sesión tmux (la CLAVE del alias — siempre existe).
-  function focusedRemote() {
-    if (_focusedTerm === "sec") return { on: T2.isAway(), host: T2.remoteHost(), label: T2.sessionLabel() };
-    return { on: awayMode, host: remoteHost, label: currentSession || "principal" };
-  }
-  // Nombre a mostrar para una sesión: su alias humano si lo has puesto; si no, el
-  // hostname detectado (solo en remoto). Null = sin nombre extra.
-  function sessionName(label, on, host) {
-    if (label && aliases[label]) return aliases[label];
-    return on ? (host || null) : null;
-  }
-  // Ya no hay badge arriba: la identidad (nombre + Local/Remoto) vive en la
-  // cabecera de cada PANTALLA. Este disparador solo refresca esas cabeceras.
+  // La identidad (nombre + Local/Remoto) vive en la cabecera de cada PANTALLA.
   function updateAwayBadge() { _updatePaneHeads(); }
 
-  // Renombrar la sesión de una pantalla (clic en su cabecera). El alias va por
-  // ETIQUETA DE SESIÓN tmux: vale igual para local y remoto y no se pierde aunque
-  // una app (Claude/vim) cambie el título del panel.
-  async function renameSessionByLabel(label, on, host) {
+  // Renombrar la SESIÓN (clic en el nombre de la cabecera). El alias va por
+  // ETIQUETA DE SESIÓN tmux. Persiste por separado del alias del servidor.
+  async function renameSessionByLabel(label) {
     if (!label) return;
-    const ctx = on ? ("Remoto" + (host ? " · " + host : "")) : "Local";
     const name = await uiPrompt({
       icon: "pencil", title: "Nombre de esta pantalla",
-      message: "Nombre que verás en la cabecera (" + ctx + "). Déjalo vacío para quitarlo.",
-      placeholder: "p. ej. Producción, Local dev…", value: aliases[label] || "", ok: "Guardar",
+      message: "Nombre para la sesión “" + label + "”. Déjalo vacío para quitarlo.",
+      placeholder: "p. ej. Producción, Local dev…",
+      value: sessionAliases[label] || "", ok: "Guardar",
     });
     if (name === null) return;
     const clean = name.trim();
-    if (clean) aliases[label] = clean; else delete aliases[label];
-    _updatePaneHeads();
-    _updateTabsUI();   // refresca también el nombre en la pestaña global
-    saveAlias(label, clean);
+    if (clean) sessionAliases[label] = clean; else delete sessionAliases[label];
+    _updatePaneHeads(); _updateTabsUI();
+    saveSessionAlias(label, clean);
   }
-  async function saveAlias(key, name) {
+  // Renombrar el SERVIDOR REMOTO (clic en "Remoto · server" de la cabecera). El
+  // alias va por HOSTNAME (p.ej. "vps-17a4c3ba") y es remanente entre sesiones.
+  async function renameHost(host) {
+    if (!host) return;
+    const name = await uiPrompt({
+      icon: "pencil", title: "Nombre del servidor remoto",
+      message: "Alias para “" + host + "”. Se quedará guardado aunque cambies de sesión. Vacío = quitarlo.",
+      placeholder: "p. ej. Producción, Vistawib…",
+      value: aliases[host] || "", ok: "Guardar",
+    });
+    if (name === null) return;
+    const clean = name.trim();
+    if (clean) aliases[host] = clean; else delete aliases[host];
+    _updatePaneHeads(); _updateTabsUI();
+    saveAlias(host, clean);
+  }
+  async function saveAlias(host, name) {
     try {
-      const body = new FormData(); body.append("host", key); body.append("name", name);
+      const body = new FormData(); body.append("host", host); body.append("name", name);
       await fetch("/preferences/alias", { method: "POST", headers: { Authorization: "Bearer " + jwt }, body });
+    } catch (_) {}
+  }
+  async function saveSessionAlias(label, name) {
+    try {
+      const body = new FormData(); body.append("label", label); body.append("name", name);
+      await fetch("/preferences/session-alias", { method: "POST", headers: { Authorization: "Bearer " + jwt }, body });
     } catch (_) {}
   }
 
@@ -902,11 +911,24 @@
       if (pop && pop.classList.contains("open") && !pop.contains(e.target) && e.target !== themeBtn && !themeBtn.contains(e.target)) closeThemePop();
     });
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeThemePop(); });
-    // Clic en la cabecera de cada pantalla -> renombrar ESA sesión.
+    // Clic en la cabecera de cada pantalla: si es en el nombre del SERVIDOR,
+    // renombra el host remoto; si no, renombra la sesión.
     const phm = $("pane-head-main");
-    if (phm) phm.addEventListener("click", () => renameSessionByLabel(currentSession || "principal", awayMode, remoteHost));
+    if (phm) phm.addEventListener("click", (e) => {
+      if (e.target.closest(".ph-srv-link")) {
+        renameHost(remoteHost);
+      } else {
+        renameSessionByLabel(currentSession || "principal");
+      }
+    });
     const phs = $("pane-head-sec");
-    if (phs) phs.addEventListener("click", () => renameSessionByLabel(T2.sessionLabel(), T2.isAway(), T2.remoteHost()));
+    if (phs) phs.addEventListener("click", (e) => {
+      if (e.target.closest(".ph-srv-link")) {
+        renameHost(T2.remoteHost());
+      } else {
+        renameSessionByLabel(T2.sessionLabel());
+      }
+    });
 
     // --- Pegar imagen (Ctrl+V con imagen en el portapapeles) ---
     // A nivel de DOCUMENTO en fase de captura: así interceptamos el pegado antes
@@ -1870,20 +1892,30 @@
     const focusEl = _splitActive() ? _slotEl(_slots[_focusPane]) : null;
     [$("terminal-container"), $("terminal-container-2"), $("viewer")].forEach((el) => { if (el) el.classList.toggle("pane-focus", el === focusEl); });
   }
-  // Cabecera de cada pantalla de terminal: nombre + localización, p. ej.
-  // "Vista (Remoto)" o "Messor (Local)". Ámbar si es remota. Clic = renombrar.
-  // (El visor de archivos ya lleva su propia cabecera.)
+  // Cabecera por pantalla: "● Messor (Local)" o "● Vista (Remoto · Producción)".
+  // - El NOMBRE (antes del paréntesis) = alias de la SESIÓN, clic para editarlo.
+  // - (Local) o (Remoto · server_name) = automático; el server_name sale del alias
+  //   del HOST (si lo pusiste) o del hostname detectado. Clic en él para editarlo.
   function _setPaneHead(id, visible, label, on, host) {
     const el = $(id);
     if (!el) return;
     el.hidden = !visible;
     if (!visible) return;
     el.classList.toggle("remote", !!on);
-    el.innerHTML = '<span class="ph-dot">●</span><span class="ph-name"></span> <span class="ph-loc"></span>';
-    el.querySelector(".ph-name").textContent = (aliases[label] || label);
-    el.querySelector(".ph-loc").textContent = on ? "(Remoto)" : "(Local)";
-    el.title = (aliases[label] || label) + " · " + (on ? "Remoto" : "Local")
-      + (on && host ? " " + host : "") + " — clic para renombrar";
+    const sName = sessionAliases[label] || label;
+    const srvName = on ? (aliases[host] || host || null) : null;
+    el.innerHTML = '<span class="ph-dot">●</span>'
+      + '<span class="ph-name"></span> '
+      + '<span class="ph-loc">(<span class="ph-ctx"></span><span class="ph-srv"></span>)</span>';
+    el.querySelector(".ph-name").textContent = sName;
+    el.querySelector(".ph-ctx").textContent = on ? "Remoto" : "Local";
+    if (on && srvName) {
+      el.querySelector(".ph-srv").textContent = " · " + srvName;
+      el.querySelector(".ph-srv").classList.add("ph-srv-link");
+      el.querySelector(".ph-srv").title = "Clic para renombrar el servidor “" + (host || "") + "”";
+    }
+    el.title = sName + " · " + (on ? "Remoto" : "Local") + (on && srvName ? " " + srvName : "")
+      + " — clic para renombrar esta pantalla";
   }
   function _updatePaneHeads() {
     if (_splitActive()) {
@@ -2163,10 +2195,12 @@
       const el = document.createElement("div");
       el.className = "tab" + sessCls(s) + (s.remote ? " remote" : "");
       el.dataset.tab = "term:" + s.label;
-      el.title = "Sesión tmux: " + s.label + (s.current ? " (actual)" : "")
-        + (s.remote ? " · REMOTO" + (s.host ? ": " + s.host : "") : " · LOCAL");
+      const srvName = s.remote && s.host ? (aliases[s.host] || s.host) : null;
+      el.title = "Sesión: " + (sessionAliases[s.label] || s.label)
+        + (s.current ? " (actual)" : "")
+        + (srvName ? " · REMOTO: " + srvName : " · LOCAL");
       el.innerHTML = '<span class="tab-ico">' + icon("terminal") + '</span><span class="tab-name"></span>';
-      el.querySelector(".tab-name").textContent = aliases[s.label] || s.label;
+      el.querySelector(".tab-name").textContent = sessionAliases[s.label] || s.label;
       if (sessions.length > 1) {   // se puede cerrar cualquiera salvo si es la única
         const x = document.createElement("button");
         x.className = "tab-close"; x.innerHTML = icon("x"); x.title = "Cerrar esta sesión";
