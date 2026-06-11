@@ -252,8 +252,8 @@ label.remember input { width: auto; margin: 0; accent-color: var(--accent); curs
 .pane-head .ph-dot { font-size: 8px; line-height: 1; color: var(--accent); }
 .pane-head .ph-name { overflow: hidden; text-overflow: ellipsis; }
 .pane-head .ph-loc { font-weight: 400; opacity: .7; text-transform: none; letter-spacing: 0; }
-.pane-head .ph-srv-link { cursor: pointer; text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 3px; }
-.pane-head .ph-srv-link:hover { opacity: 1; text-decoration-style: solid; }
+.pane-head .ph-srv-link { cursor: pointer; }
+.pane-head .ph-srv-link:hover { opacity: .8; }
 /* Cabecera de un panel REMOTO: ámbar, a juego con el tinte y el badge. */
 .pane-head.remote { color: var(--yellow); background: color-mix(in srgb, var(--yellow), var(--panel) 82%); border-bottom-color: color-mix(in srgb, var(--yellow), transparent 55%); }
 .pane-head.remote .ph-dot { color: var(--yellow); }

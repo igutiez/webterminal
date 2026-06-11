@@ -58,6 +58,79 @@ def _host_from_title(title: str):
     return None
 
 
+def _host_from_ssh_args(pid: str) -> str | None:
+    """Si el panel corre un comando remoto (ssh/mosh/…), intenta sacar el host de
+    sus argumentos vía /proc. `pid` es el PID del shell/proceso en el panel; el
+    proceso remoto (ssh) suele ser un HIJO suyo. None si no se encuentra."""
+    pid = (pid or "").strip()
+    if not pid or not pid.isdigit():
+        return None
+    # Buscar cualquier PID (el propio o hijos) cuyo cmdline empiece por ssh/mosh/…
+    pids = _child_pids(int(pid)) + [int(pid)]
+    for p in pids:
+        try:
+            with open(f"/proc/{p}/cmdline", "rb") as fh:
+                raw = fh.read()
+        except (OSError, PermissionError):
+            continue
+        args = raw.replace(b"\x00", b" ").decode("utf-8", "replace").strip()
+        if not args:
+            continue
+        # Solo procesos cuyo argv[0] sea un comando remoto
+        tokens = shlex.split(args)
+        if not tokens or os.path.basename(tokens[0]).lower() not in REMOTE_CMDS:
+            continue
+        host = _parse_remote_args(tokens)
+        if host:
+            return host
+    return None
+
+
+def _child_pids(ppid: int) -> list[int]:
+    """Lista los PIDs hijos directos de `ppid` (rápido, lee /proc/<ppid>/task/...)."""
+    try:
+        with open(f"/proc/{ppid}/task/{ppid}/children", "r") as fh:
+            return [int(x) for x in fh.read().split()]
+    except (OSError, ValueError):
+        pass
+    try:
+        # Fallback: pgrep
+        import subprocess
+        out = subprocess.run(
+            ["pgrep", "-P", str(ppid)], capture_output=True, timeout=2,
+        )
+        return [int(x) for x in out.stdout.decode().split() if x.strip().isdigit()]
+    except Exception:
+        return []
+
+
+def _parse_remote_args(tokens: list[str]) -> str | None:
+    """De los argumentos de ssh/mosh/…, saca el hostname destino."""
+    skip_next = False
+    for i, tok in enumerate(tokens[1:], start=1):
+        if skip_next:
+            skip_next = False
+            continue
+        if tok.startswith("-"):
+            if tok in ("-p", "-l", "-i", "-o", "-J", "-P", "-W"):
+                skip_next = True  # el siguiente token es el VALOR de esta flag
+            continue
+        if re.fullmatch(r"-[A-Za-z]", tok):
+            continue  # flag corta
+        if tok.lower() in REMOTE_CMDS:
+            continue  # subcomando (ssh pass-through en wrappers: sshpass, autossh…)
+        # token que NO es flag: candidato a host
+        if "@" in tok:
+            m = re.search(r"(\S+@\S+)", tok)
+            if m:
+                return m.group(1).rsplit("@", 1)[-1].rstrip(".")
+            continue
+        # hostname pelado (p.ej. `ssh 151.80.235.56` o `ssh vps.example.com`)
+        if re.fullmatch(r"[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?", tok):
+            return tok
+    return None
+
+
 def _slug(s: str | None) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "_", (s or "").lower()).strip("_")
 
@@ -285,17 +358,18 @@ class SSHTerminal:
         lo contiene; el título (que sí podría) va el último y no se re-parte."""
         try:
             raw = self._tmux("list-sessions", "-F",
-                             "#{session_name}|#{pane_current_command}|#{pane_title}")
+                             "#{session_name}|#{pane_current_command}|#{pane_title}|#{pane_pid}")
         except Exception:
             return []
         out = []
         for line in raw.splitlines():
             if not line.strip():
                 continue
-            parts = line.split("|", 2)
+            parts = line.split("|", 3)
             name = parts[0].strip()
             cmd = parts[1].strip().lower() if len(parts) > 1 else ""
             title = parts[2] if len(parts) > 2 else ""
+            pid = parts[3].strip() if len(parts) > 3 else ""
             if name == self.prefix:
                 label = DEFAULT_LABEL
             elif name.startswith(self.prefix + "-"):
@@ -303,11 +377,14 @@ class SSHTerminal:
             else:
                 continue  # sesión de OTRO usuario: no se lista ni se toca
             remote = cmd in REMOTE_CMDS
+            host = None
+            if remote:
+                host = _host_from_title(title) or _host_from_ssh_args(pid)
             out.append({
                 "label": label,
                 "current": name == self.session,
                 "remote": remote,
-                "host": _host_from_title(title) if remote else None,
+                "host": host,
             })
         return out
 
