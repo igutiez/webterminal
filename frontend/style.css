@@ -208,7 +208,7 @@ label.remember input { width: auto; margin: 0; accent-color: var(--accent); curs
 /* Vista dividida: dos huecos (terminal y/o archivo) con divisor arrastrable.
    El reparto va por POSICIÓN (no por identidad), porque los lados se intercambian:
    el primer hueco usa --split de ancho; el último, el resto. */
-#panes > .panes-divider { flex: 0 0 8px; cursor: col-resize; background: var(--border); z-index: 5; position: relative; }
+#panes > .panes-divider { flex: 0 0 8px; cursor: col-resize; background: var(--border); z-index: 5; position: relative; touch-action: none; }
 .panes-divider[hidden] { display: none !important; }
 /* Área de agarre más ancha (±5px) sin ocupar layout. */
 #panes > .panes-divider::after { content: ""; position: absolute; top: 0; bottom: 0; left: -5px; right: -5px; }
@@ -412,12 +412,15 @@ body.files-open .files-side { display: flex; }
 .files-resizer:hover::before, .files-resizer.dragging::before { background: var(--accent); }
 
 .fs-head {
-  flex: 0 0 var(--bar-h); height: var(--bar-h); display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  padding: 0 10px; background: var(--panel); border-bottom: 1px solid var(--border);
+  flex: 0 0 auto; min-height: var(--bar-h); display: flex; flex-wrap: wrap;
+  align-items: center; justify-content: space-between; gap: 5px 8px;
+  padding: 5px 10px; background: var(--panel); border-bottom: 1px solid var(--border);
 }
 .fs-title { font-weight: 600; color: var(--text); font-size: 11px; text-transform: uppercase; letter-spacing: .12em; white-space: nowrap; display: inline-flex; align-items: center; gap: 7px; }
 .fs-title .ic { color: var(--accent); }
-.fs-tools { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+/* Los botones se reparten en varias filas cuando el árbol es estrecho (en vez de
+   salirse). flex:1 para empujarse a la derecha; wrap para apilarse. */
+.fs-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 4px; flex: 1 1 auto; }
 .fbtn {
   background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
   min-width: 30px; height: 28px; padding: 0 8px; border-radius: var(--r-s); cursor: pointer;

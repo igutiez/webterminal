@@ -254,7 +254,22 @@ class SSHTerminal:
             await asyncio.to_thread(self._kill_session, obj.get("label"))
             await self._send_session_list()
             return True
+        if t == "scroll-bottom":
+            await asyncio.to_thread(self._scroll_to_bottom)
+            return True
         return False
+
+    def _scroll_to_bottom(self) -> None:
+        """Si el panel está en copy-mode (has scrolleado arriba), lo cancela: vuelve
+        al fondo, al prompt vivo. Fuera de copy-mode no hace nada (evitamos el aviso
+        'not in a mode' comprobando #{pane_in_mode} antes)."""
+        try:
+            out = self._tmux("display-message", "-p", "-t", self.session, "#{pane_in_mode}")
+            in_mode = (out.strip().splitlines() or ["0"])[0].strip()
+            if in_mode == "1":
+                self._tmux("send-keys", "-t", self.session, "-X", "cancel")
+        except Exception:
+            pass
 
     # ---- gestión de sesiones tmux DEL USUARIO (vía exec sobre su propio SSH) ----
     def _tmux(self, *args: str) -> str:

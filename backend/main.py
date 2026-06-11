@@ -57,6 +57,7 @@ MIN_PW_LEN = 8
 # El id se guarda por usuario; cualquier otro valor se rechaza.
 VALID_THEMES = frozenset({
     "messor-night", "dracula", "nord", "gruvbox", "solarized-dark", "paper",
+    "tokyo-night", "catppuccin", "one-dark", "monokai", "rose-pine", "github-light",
 })
 
 # Anti fuerza bruta de la contraseña del SISTEMA: tras MAX_SSH_FAILS contraseñas

@@ -589,6 +589,66 @@
         magenta:"#97266d", cyan:"#2c7a7b", white:"#5b5750" },
       bgAway:"#f3e1d6", swatch:["#f5f3ec","#2b6cb0"],
     },
+    "tokyo-night": {
+      name: "Tokyo Night", chrome: {
+        bg:"#1a1b26", panel:"#24283b", panel2:"#16161e", border:"#2f3549",
+        accent:"#7aa2f7", accentRgb:"122, 162, 247", accentInk:"#0b1020",
+        text:"#c0caf5", muted:"#565f89", green:"#9ece6a", red:"#f7768e", yellow:"#e0af68" },
+      term: { background:"#1a1b26", foreground:"#c0caf5", cursor:"#c0caf5", selectionBackground:"#2f3549",
+        black:"#15161e", red:"#f7768e", green:"#9ece6a", yellow:"#e0af68", blue:"#7aa2f7",
+        magenta:"#bb9af7", cyan:"#7dcfff", white:"#a9b1d6" },
+      bgAway:"#2a1622", swatch:["#1a1b26","#7aa2f7"],
+    },
+    "catppuccin": {
+      name: "Catppuccin", chrome: {
+        bg:"#1e1e2e", panel:"#292c3c", panel2:"#181825", border:"#313244",
+        accent:"#cba6f7", accentRgb:"203, 166, 247", accentInk:"#1a1426",
+        text:"#cdd6f4", muted:"#9399b2", green:"#a6e3a1", red:"#f38ba8", yellow:"#f9e2af" },
+      term: { background:"#1e1e2e", foreground:"#cdd6f4", cursor:"#f5e0dc", selectionBackground:"#313244",
+        black:"#45475a", red:"#f38ba8", green:"#a6e3a1", yellow:"#f9e2af", blue:"#89b4fa",
+        magenta:"#f5c2e7", cyan:"#94e2d5", white:"#bac2de" },
+      bgAway:"#2e1a2a", swatch:["#1e1e2e","#cba6f7"],
+    },
+    "one-dark": {
+      name: "One Dark", chrome: {
+        bg:"#282c34", panel:"#31353f", panel2:"#21252b", border:"#3b4048",
+        accent:"#61afef", accentRgb:"97, 175, 239", accentInk:"#06151f",
+        text:"#abb2bf", muted:"#828997", green:"#98c379", red:"#e06c75", yellow:"#e5c07b" },
+      term: { background:"#282c34", foreground:"#abb2bf", cursor:"#abb2bf", selectionBackground:"#3b4048",
+        black:"#3f4451", red:"#e06c75", green:"#98c379", yellow:"#e5c07b", blue:"#61afef",
+        magenta:"#c678dd", cyan:"#56b6c2", white:"#abb2bf" },
+      bgAway:"#33222a", swatch:["#282c34","#61afef"],
+    },
+    "monokai": {
+      name: "Monokai", chrome: {
+        bg:"#272822", panel:"#34352c", panel2:"#1d1e19", border:"#49483e",
+        accent:"#a6e22e", accentRgb:"166, 226, 46", accentInk:"#172200",
+        text:"#f8f8f2", muted:"#9d9d8a", green:"#a6e22e", red:"#f92672", yellow:"#e6db74" },
+      term: { background:"#272822", foreground:"#f8f8f2", cursor:"#f8f8f2", selectionBackground:"#49483e",
+        black:"#272822", red:"#f92672", green:"#a6e22e", yellow:"#e6db74", blue:"#66d9ef",
+        magenta:"#ae81ff", cyan:"#a1efe4", white:"#f8f8f2" },
+      bgAway:"#33222e", swatch:["#272822","#a6e22e"],
+    },
+    "rose-pine": {
+      name: "Rosé Pine", chrome: {
+        bg:"#191724", panel:"#1f1d2e", panel2:"#15131f", border:"#26233a",
+        accent:"#c4a7e7", accentRgb:"196, 167, 231", accentInk:"#161020",
+        text:"#e0def4", muted:"#6e6a86", green:"#9ccfd8", red:"#eb6f92", yellow:"#f6c177" },
+      term: { background:"#191724", foreground:"#e0def4", cursor:"#e0def4", selectionBackground:"#26233a",
+        black:"#26233a", red:"#eb6f92", green:"#9ccfd8", yellow:"#f6c177", blue:"#31748f",
+        magenta:"#c4a7e7", cyan:"#ebbcba", white:"#e0def4" },
+      bgAway:"#2a1622", swatch:["#191724","#c4a7e7"],
+    },
+    "github-light": {
+      name: "GitHub (día)", light: true, chrome: {
+        bg:"#ffffff", panel:"#f6f8fa", panel2:"#eaeef2", border:"#d0d7de",
+        accent:"#0969da", accentRgb:"9, 105, 218", accentInk:"#ffffff",
+        text:"#1f2328", muted:"#656d76", green:"#1a7f37", red:"#cf222e", yellow:"#9a6700" },
+      term: { background:"#ffffff", foreground:"#1f2328", cursor:"#1f2328", selectionBackground:"#d0d7de",
+        black:"#24292f", red:"#cf222e", green:"#1a7f37", yellow:"#9a6700", blue:"#0969da",
+        magenta:"#8250df", cyan:"#1b7c83", white:"#6e7781" },
+      bgAway:"#fbe9e6", swatch:["#ffffff","#0969da"],
+    },
   };
 
   let activeThemeId = DEFAULT_THEME;
@@ -1063,7 +1123,10 @@
   // una app (Claude/vim) ocupando la pantalla. El scrollToBottom cubre el buffer
   // normal de xterm (sin tmux).
   function scrollTermBottom() {
-    sendRaw("\x02:if -F '#{pane_in_mode}' 'send-keys -X cancel'\r");
+    // Se lo pedimos al backend (ejecuta el "cancel" de copy-mode por su cuenta), así
+    // NO tecleamos nada en el PTY ni abrimos el prompt ':' de tmux. scrollToBottom
+    // cubre el buffer propio de xterm (sin tmux).
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "scroll-bottom" }));
     if (term) { try { term.scrollToBottom(); } catch (_) {} term.focus(); }
   }
   function setupKeybar() {
@@ -1144,6 +1207,21 @@
     }
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "tmux-kill", label }));
     // El backend responde con la lista ya actualizada (renderSessions).
+  }
+  // Cerrar la sesión en la que ESTÁS: primero salta a otra (la de al lado), y solo
+  // entonces mata la antigua. (Si la matáramos estando dentro, al reconectar tmux la
+  // recrearía con `new-session -A`.) No hace nada si es la única sesión.
+  function closeCurrentSession() {
+    const list = _sessions.slice();
+    if (list.length <= 1) return;
+    const cur = currentSession || "principal";
+    const idx = list.findIndex((s) => s.label === cur);
+    const target = list[idx - 1] || list[idx + 1] || list.find((s) => s.label !== cur);
+    if (!target) return;
+    switchSession(target.label);                 // reconecta la principal a la de al lado
+    setTimeout(() => {                            // ya en la otra, mata la antigua
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "tmux-kill", label: cur }));
+    }, 700);
   }
   // Reconexión inmediata e intencionada (cambiar de sesión), sin esperar backoff.
   function reconnectNow() {
@@ -1832,6 +1910,12 @@
       const Lel = _slotEl(_slots.L), Rel = _slotEl(_slots.R);
       const unused = [P, S, V].filter((el) => el && el !== Lel && el !== Rel);
       panes.append(Lel, div, Rel, ...unused);
+      // CLAVE: la barra de búsqueda (#term-find) es flotante/absoluta pero es un
+      // hijo de #panes; si queda como :first-child, la regla `#panes.split >
+      // *:first-child { flex: var(--split) }` la redimensiona A ELLA (oculta) en
+      // vez del panel izquierdo → el divisor "no hacía nada". La mandamos al final.
+      const tf = $("term-find");
+      if (tf) panes.append(tf);
     }
     _applyFocusOutline();
   }
@@ -1994,29 +2078,31 @@
       panes.style.setProperty("--split", pct + "%");
       _refitPanes();
     };
-    const start = (e) => {
-      dragging = true;
-      div.classList.add("dragging"); panes.classList.add("dragging");
-      document.body.style.userSelect = "none"; document.body.style.cursor = "col-resize";
-      e.preventDefault();
-    };
-    const end = () => {
+    // Pointer Events + setPointerCapture: una vez agarras el divisor, TODOS los
+    // movimientos llegan a este handler aunque el puntero pase por encima de un
+    // iframe (preview/visor), del terminal o de una extensión del navegador. Con
+    // mousemove a nivel de window eso se rompía (el iframe se "comía" los eventos).
+    const end = (e) => {
       if (!dragging) return;
       dragging = false;
+      try { div.releasePointerCapture(e.pointerId); } catch (_) {}
       div.classList.remove("dragging", "snapped"); panes.classList.remove("dragging");
       document.body.style.userSelect = ""; document.body.style.cursor = "";
       _refitPanes();
     };
+    div.addEventListener("pointerdown", (e) => {
+      if (e.button != null && e.button !== 0) return;   // solo botón principal
+      dragging = true;
+      try { div.setPointerCapture(e.pointerId); } catch (_) {}
+      div.classList.add("dragging"); panes.classList.add("dragging");
+      document.body.style.userSelect = "none"; document.body.style.cursor = "col-resize";
+      e.preventDefault();
+    });
+    div.addEventListener("pointermove", (e) => { if (dragging) { onMove(e.clientX); e.preventDefault(); } });
+    div.addEventListener("pointerup", end);
+    div.addEventListener("pointercancel", end);
     // Doble clic en el divisor = volver al reparto igual (50/50).
     div.addEventListener("dblclick", () => { panes.style.setProperty("--split", "50%"); _refitPanes(); });
-    // Ratón
-    div.addEventListener("mousedown", start);
-    window.addEventListener("mousemove", (e) => { if (dragging) onMove(e.clientX); });
-    window.addEventListener("mouseup", end);
-    // Táctil (tablet)
-    div.addEventListener("touchstart", start, { passive: false });
-    window.addEventListener("touchmove", (e) => { if (dragging && e.touches[0]) { onMove(e.touches[0].clientX); e.preventDefault(); } }, { passive: false });
-    window.addEventListener("touchend", end);
     window.addEventListener("resize", () => { if (_split) { _applyPanes(); _refitPanes(); } });
   }
 
@@ -2059,10 +2145,13 @@
         + (s.remote ? " · REMOTO" + (s.host ? ": " + s.host : "") : " · LOCAL");
       el.innerHTML = '<span class="tab-ico">' + icon("terminal") + '</span><span class="tab-name"></span>';
       el.querySelector(".tab-name").textContent = aliases[s.label] || s.label;
-      if (!s.current) {   // solo se puede cerrar una sesión que no sea la actual
+      if (sessions.length > 1) {   // se puede cerrar cualquiera salvo si es la única
         const x = document.createElement("button");
         x.className = "tab-close"; x.innerHTML = icon("x"); x.title = "Cerrar esta sesión";
-        x.addEventListener("click", (e) => { e.stopPropagation(); killSession(s.label); });
+        x.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (s.current) closeCurrentSession(); else killSession(s.label);
+        });
         el.appendChild(x);
       }
       el.addEventListener("click", (e) => {
