@@ -95,7 +95,7 @@ body {
 }
 .tbtn:active { background: rgba(var(--accent-rgb), .12); border-color: var(--accent); color: var(--accent); }
 
-#term { flex: 1 1 auto; min-height: 0; background: var(--term-bg); overflow: hidden; padding: 4px 2px 0 6px; }
+#term { flex: 1 1 auto; min-height: 0; background: var(--term-bg); overflow: hidden; padding: 4px 2px 0 6px; touch-action: none; }
 #term .xterm { height: 100%; }
 
 /* Barra de teclas especiales */

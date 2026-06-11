@@ -178,6 +178,7 @@
     try { if (term.textarea) { term.textarea.readOnly = true; term.textarea.tabIndex = -1; term.textarea.setAttribute("inputmode", "none"); } } catch (_) {}
     refit();
     requestAnimationFrame(refit);
+    setupTouchScroll();
     window.addEventListener("resize", refit);
     // El teclado virtual cambia el viewport: reajustar para no descuadrar filas/cols.
     if (window.visualViewport) window.visualViewport.addEventListener("resize", refit);
@@ -185,6 +186,54 @@
   function refit() {
     if (!fitAddon || !term) return;
     try { fitAddon.fit(); if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows })); } catch (_) {}
+  }
+
+  // ---------- Scroll táctil del terminal ----------
+  // Bajo tmux (y Claude Code) el terminal vive en la pantalla alternativa: xterm
+  // no acumula scrollback propio, así que el gesto táctil no tiene nada que
+  // desplazar. Traducimos el deslizar vertical a eventos de rueda SGR: el tmux
+  // del servidor tiene `mouse on`, con lo que o scrollea su copy-mode (shell) o
+  // le pasa la rueda a la app de dentro (Claude Code mueve su histórico).
+  const _PX_PER_TICK = 18;   // píxeles de dedo por "diente" de rueda
+  function _wheelSeq(up) {
+    const col = Math.max(1, Math.round((term ? term.cols : 80) / 2));
+    const row = Math.max(1, Math.round((term ? term.rows : 24) / 2));
+    return "\x1b[<" + (up ? 64 : 65) + ";" + col + ";" + row + "M";
+  }
+  function setupTouchScroll() {
+    const el = $("term"); if (!el || el._touchScroll) return;
+    el._touchScroll = true;
+    let lastY = null, startX = 0, startY = 0, vertical = null, acc = 0;
+    el.addEventListener("touchstart", (e) => {
+      if (e.touches.length !== 1) { lastY = null; return; }
+      lastY = startY = e.touches[0].clientY; startX = e.touches[0].clientX;
+      vertical = null; acc = 0;
+    }, { passive: true });
+    el.addEventListener("touchmove", (e) => {
+      if (lastY == null || !term) return;
+      const t = e.touches[0];
+      if (vertical == null) {
+        const dx = Math.abs(t.clientX - startX), dy = Math.abs(t.clientY - startY);
+        if (dx < 6 && dy < 6) return;             // gesto aún ambiguo
+        vertical = dy >= dx;
+        if (!vertical) { lastY = null; return; }  // horizontal: no es nuestro
+      }
+      acc += t.clientY - lastY; lastY = t.clientY;
+      const ticks = Math.trunc(acc / _PX_PER_TICK);
+      e.preventDefault();                         // que iOS no intente su propio pan
+      if (!ticks) return;
+      acc -= ticks * _PX_PER_TICK;
+      const up = ticks > 0;                       // dedo hacia abajo = ver lo de atrás
+      let mouse = false, alt = false;
+      try { mouse = term.modes.mouseTrackingMode !== "none"; } catch (_) {}
+      try { alt = term.buffer.active.type === "alternate"; } catch (_) {}
+      for (let i = Math.abs(ticks); i > 0; i--) {
+        if (mouse) sendRaw(_wheelSeq(up));        // tmux/Claude: rueda de verdad
+        else if (alt) sendRaw(up ? "\x1b[A" : "\x1b[B");  // app alternativa sin ratón
+        else if (term) term.scrollLines(up ? -1 : 1);     // buffer normal: scrollback xterm
+      }
+    }, { passive: false });
+    el.addEventListener("touchend", () => { lastY = null; }, { passive: true });
   }
 
   // ---------- WebSocket ----------
