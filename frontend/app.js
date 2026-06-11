@@ -743,38 +743,26 @@
     if (label && aliases[label]) return aliases[label];
     return on ? (host || null) : null;
   }
-  // El badge SIEMPRE visible con terminal conectada: "LOCAL" o "⬤ REMOTO", con el
-  // nombre detrás si lo hay (p. ej. "⬤ REMOTO · pepe"). Clicable para renombrar.
-  function updateAwayBadge() {
-    const r = focusedRemote();
-    const b = $("away-badge");
-    if (!b) return;
-    b.style.display = "";
-    b.classList.toggle("remote", !!r.on);
-    const nm = sessionName(r.label, r.on, r.host);
-    b.textContent = (r.on ? "⬤ REMOTO" : "LOCAL") + (nm ? " · " + nm : "");
-    b.title = "Pulsa para ponerle un nombre a esta sesión" + (r.on && r.host ? " (" + r.host + ")" : "");
-    if (typeof _updatePaneHeads === "function") _updatePaneHeads();
-  }
+  // Ya no hay badge arriba: la identidad (nombre + Local/Remoto) vive en la
+  // cabecera de cada PANTALLA. Este disparador solo refresca esas cabeceras.
+  function updateAwayBadge() { _updatePaneHeads(); }
 
-  // Renombrar la sesión enfocada (clic en el badge). El alias va por ETIQUETA DE
-  // SESIÓN tmux, así vale igual para local y remoto y no se pierde aunque una app
-  // (Claude/vim) cambie el título del panel.
-  async function renameSession() {
-    const r = focusedRemote();
-    const label = r.label;
+  // Renombrar la sesión de una pantalla (clic en su cabecera). El alias va por
+  // ETIQUETA DE SESIÓN tmux: vale igual para local y remoto y no se pierde aunque
+  // una app (Claude/vim) cambie el título del panel.
+  async function renameSessionByLabel(label, on, host) {
     if (!label) return;
-    const ctx = r.on ? ("remoto" + (r.host ? " · " + r.host : "")) : "local";
+    const ctx = on ? ("Remoto" + (host ? " · " + host : "")) : "Local";
     const name = await uiPrompt({
-      icon: "pencil", title: "Nombre de esta sesión",
-      message: "Nombre que verás en el indicador (" + ctx + "). Déjalo vacío para quitarlo.",
+      icon: "pencil", title: "Nombre de esta pantalla",
+      message: "Nombre que verás en la cabecera (" + ctx + "). Déjalo vacío para quitarlo.",
       placeholder: "p. ej. Producción, Local dev…", value: aliases[label] || "", ok: "Guardar",
     });
     if (name === null) return;
     const clean = name.trim();
     if (clean) aliases[label] = clean; else delete aliases[label];
-    updateAwayBadge();
-    _updateTabsUI();   // refresca también el nombre en la pestaña
+    _updatePaneHeads();
+    _updateTabsUI();   // refresca también el nombre en la pestaña global
     saveAlias(label, clean);
   }
   async function saveAlias(key, name) {
@@ -914,11 +902,11 @@
       if (pop && pop.classList.contains("open") && !pop.contains(e.target) && e.target !== themeBtn && !themeBtn.contains(e.target)) closeThemePop();
     });
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeThemePop(); });
-    // El badge "REMOTO" sigue al foco: al enfocar la terminal principal, refléjala.
-    if (term && term.textarea) term.textarea.addEventListener("focus", () => { _focusedTerm = "main"; updateAwayBadge(); });
-    // Clic en el badge REMOTO -> renombrar el servidor con un alias humano.
-    const awayBadge = $("away-badge");
-    if (awayBadge) awayBadge.addEventListener("click", renameSession);
+    // Clic en la cabecera de cada pantalla -> renombrar ESA sesión.
+    const phm = $("pane-head-main");
+    if (phm) phm.addEventListener("click", () => renameSessionByLabel(currentSession || "principal", awayMode, remoteHost));
+    const phs = $("pane-head-sec");
+    if (phs) phs.addEventListener("click", () => renameSessionByLabel(T2.sessionLabel(), T2.isAway(), T2.remoteHost()));
 
     // --- Pegar imagen (Ctrl+V con imagen en el portapapeles) ---
     // A nivel de DOCUMENTO en fase de captura: así interceptamos el pegado antes
@@ -1882,25 +1870,34 @@
     const focusEl = _splitActive() ? _slotEl(_slots[_focusPane]) : null;
     [$("terminal-container"), $("terminal-container-2"), $("viewer")].forEach((el) => { if (el) el.classList.toggle("pane-focus", el === focusEl); });
   }
-  // Mini-cabecera de cada panel de terminal: visible SOLO en split, con el nombre de
-  // su sesión y color según local/remoto. (El visor ya lleva su propia cabecera.)
+  // Cabecera de cada pantalla de terminal: nombre + localización, p. ej.
+  // "Vista (Remoto)" o "Messor (Local)". Ámbar si es remota. Clic = renombrar.
+  // (El visor de archivos ya lleva su propia cabecera.)
   function _setPaneHead(id, visible, label, on, host) {
     const el = $(id);
     if (!el) return;
     el.hidden = !visible;
     if (!visible) return;
     el.classList.toggle("remote", !!on);
-    el.innerHTML = '<span class="ph-dot">●</span><span class="ph-name"></span>';
+    el.innerHTML = '<span class="ph-dot">●</span><span class="ph-name"></span> <span class="ph-loc"></span>';
     el.querySelector(".ph-name").textContent = (aliases[label] || label);
-    el.title = (on ? "REMOTO" : "LOCAL") + (on && host ? " · " + host : "") + " — clic para enfocar este panel";
+    el.querySelector(".ph-loc").textContent = on ? "(Remoto)" : "(Local)";
+    el.title = (aliases[label] || label) + " · " + (on ? "Remoto" : "Local")
+      + (on && host ? " " + host : "") + " — clic para renombrar";
   }
   function _updatePaneHeads() {
-    const split = _splitActive();
-    const kinds = [_slots.L.kind, _slots.R.kind];
-    _setPaneHead("pane-head-main", split && kinds.includes("main"),
-      currentSession || "principal", awayMode, remoteHost);
-    _setPaneHead("pane-head-sec", split && kinds.includes("sec"),
-      T2.sessionLabel(), T2.isAway(), T2.remoteHost());
+    if (_splitActive()) {
+      const kinds = [_slots.L.kind, _slots.R.kind];
+      _setPaneHead("pane-head-main", kinds.includes("main"),
+        currentSession || "principal", awayMode, remoteHost);
+      _setPaneHead("pane-head-sec", kinds.includes("sec"),
+        T2.sessionLabel(), T2.isAway(), T2.remoteHost());
+    } else {
+      // Un solo panel: cabecera en la principal si se ve el terminal (no el visor).
+      const onTerm = (_activeTab === _TAB_TERM) || (_viewerTabs.size === 0);
+      _setPaneHead("pane-head-main", onTerm, currentSession || "principal", awayMode, remoteHost);
+      _setPaneHead("pane-head-sec", false);
+    }
   }
   // Reconcilia el DOM (layout + visibilidad + motores) con el estado de los huecos.
   function _applyPanes() {
