@@ -16,9 +16,11 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
   <link href="https://unpkg.com/xterm@5.3.0/css/xterm.css" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=8" />
+  <link rel="stylesheet" href="style.css?v=9" />
   <script src="https://unpkg.com/xterm@5.3.0/lib/xterm.js"></script>
   <script src="https://unpkg.com/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+  <script src="https://unpkg.com/xterm-addon-search@0.13.0/lib/xterm-addon-search.js"></script>
+  <script src="https://unpkg.com/xterm-addon-webgl@0.16.0/lib/xterm-addon-webgl.js"></script>
 </head>
 <body>
   <!-- Sprite SVG (subconjunto de lucide-static, ISC) -->
@@ -27,6 +29,10 @@
     <symbol id="ic-folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" /></symbol>
     <symbol id="ic-file-text" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z" /><path d="M14 2v5a1 1 0 0 0 1 1h5" /><path d="M10 9H8" /><path d="M16 13H8" /><path d="M16 17H8" /></symbol>
     <symbol id="ic-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></symbol>
+    <symbol id="ic-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /></symbol>
+    <symbol id="ic-arrow-up" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 7-7 7 7" /><path d="M12 19V5" /></symbol>
+    <symbol id="ic-arrow-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14" /><path d="m19 12-7 7-7-7" /></symbol>
+    <symbol id="ic-trash-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 11v6" /><path d="M14 11v6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" /><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></symbol>
     <symbol id="ic-arrow-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 19-7-7 7-7" /><path d="M19 12H5" /></symbol>
     <symbol id="ic-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3" /><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="m7 10 5 5 5-5" /></symbol>
     <symbol id="ic-upload" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12" /><path d="m17 8-5-5-5 5" /><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /></symbol>
@@ -78,7 +84,16 @@
       <button id="files-btn" class="tbtn" title="Archivos"><svg class="ic"><use href="#ic-folder"/></svg></button>
     </header>
 
-    <div id="term" class="term"></div>
+    <div class="term-wrap">
+      <div id="term" class="term"></div>
+      <div id="term-find" class="term-find" hidden>
+        <input id="term-find-input" type="text" placeholder="Buscar…" autocomplete="off" spellcheck="false" autocapitalize="off" />
+        <span id="term-find-count" class="term-find-count"></span>
+        <button id="term-find-prev" class="tbtn" title="Anterior"><svg class="ic sm"><use href="#ic-arrow-up"/></svg></button>
+        <button id="term-find-next" class="tbtn" title="Siguiente"><svg class="ic sm"><use href="#ic-arrow-down"/></svg></button>
+        <button id="term-find-x" class="tbtn" title="Cerrar"><svg class="ic sm"><use href="#ic-x"/></svg></button>
+      </div>
+    </div>
 
     <div id="keybar" class="keybar"></div>
 
@@ -126,6 +141,25 @@
   </div>
 
   <input id="files-input" type="file" accept="image/*" hidden />
+  <!-- Gestor de comandos favoritos (snippets) -->
+  <div id="snip-modal" class="ui-modal" hidden>
+    <div class="ui-modal-box snip-box" role="dialog" aria-modal="true">
+      <div class="ui-modal-icon">★</div>
+      <div class="ui-modal-title">Comandos favoritos</div>
+      <div class="ui-modal-msg">Atajos en la barra de teclas. Toca uno para enviarlo.</div>
+      <div id="snip-list" class="snip-list"></div>
+      <div class="snip-add">
+        <input id="snip-new-label" class="ui-modal-input" type="text" placeholder="Etiqueta" autocomplete="off" />
+        <input id="snip-new-cmd" class="ui-modal-input" type="text" placeholder="Comando" autocomplete="off" spellcheck="false" autocapitalize="off" />
+        <label class="snip-enter"><input id="snip-new-enter" type="checkbox" checked /> Ejecutar (añade Intro)</label>
+        <button id="snip-add-btn" class="ui-modal-btn primary" type="button">Añadir</button>
+      </div>
+      <div class="ui-modal-actions">
+        <button id="snip-close" class="ui-modal-btn" type="button">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal propio: sustituye a los prompt/confirm nativos del navegador -->
   <div id="ui-modal" class="ui-modal" hidden>
     <div class="ui-modal-box" role="dialog" aria-modal="true" aria-labelledby="ui-modal-title">
@@ -141,6 +175,6 @@
   </div>
 
   <div id="toast" class="toast"></div>
-  <script src="app.js?v=10"></script>
+  <script src="app.js?v=11"></script>
 </body>
 </html>

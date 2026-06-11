@@ -4,7 +4,7 @@
   "use strict";
 
   let jwt = null, sshUser = null, sshPassword = null;
-  let term = null, fitAddon = null, ws = null;
+  let term = null, fitAddon = null, searchAddon = null, ws = null;
   let reconnectAttempts = 0, autoOpenClaude = false;
   let currentSession = null;     // label tmux activo (null = principal)
   let fsid = null;               // id de sesión SFTP
@@ -160,6 +160,99 @@
     connectWS();
   }
 
+  // Renderer GPU (WebGL) con fallback automático al DOM.
+  function tryWebgl(t) {
+    try {
+      if (typeof WebglAddon === "undefined") return;
+      const a = new WebglAddon.WebglAddon();
+      a.onContextLoss(() => { try { a.dispose(); } catch (_) {} });
+      t.loadAddon(a);
+    } catch (_) {}
+  }
+  const _FIND_DECOR = { decorations: {
+    matchBackground: "#3a5a7a", matchOverviewRuler: "#58c4ff",
+    activeMatchBackground: "#58c4ff", activeMatchColorOverviewRuler: "#58c4ff",
+  } };
+
+  // ---------- Búsqueda en la terminal (barra flotante) ----------
+  let _termFindReady = false;
+  function termFindToggle() {
+    const bar = $("term-find"); if (!bar) return;
+    if (bar.hidden) { bar.hidden = false; const i = $("term-find-input"); i.focus(); i.select(); if (i.value) _termRun(i.value, true); }
+    else termFindClose();
+  }
+  function termFindClose() {
+    const bar = $("term-find"); if (bar) bar.hidden = true;
+    try { searchAddon && searchAddon.clearDecorations(); } catch (_) {}
+  }
+  function _termRun(q, inc) {
+    if (!searchAddon) return;
+    if (!q) { try { searchAddon.clearDecorations(); } catch (_) {} $("term-find-count").textContent = ""; return; }
+    try { searchAddon.findNext(q, { ..._FIND_DECOR, incremental: !!inc }); } catch (_) {}
+  }
+  function setupTermFind() {
+    if (_termFindReady || !searchAddon) return; _termFindReady = true;
+    const inp = $("term-find-input"); if (!inp) return;
+    try { searchAddon.onDidChangeResults((e) => {
+      const c = $("term-find-count");
+      c.textContent = (e && e.resultCount !== undefined) ? (e.resultCount ? `${e.resultIndex + 1}/${e.resultCount}` : "0/0") : "";
+    }); } catch (_) {}
+    inp.addEventListener("input", () => _termRun(inp.value, true));
+    inp.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); e.shiftKey ? searchAddon.findPrevious(inp.value, _FIND_DECOR) : searchAddon.findNext(inp.value, _FIND_DECOR); }
+      else if (e.key === "Escape") { e.preventDefault(); termFindClose(); }
+    });
+    $("term-find-next").addEventListener("click", () => searchAddon.findNext(inp.value, _FIND_DECOR));
+    $("term-find-prev").addEventListener("click", () => searchAddon.findPrevious(inp.value, _FIND_DECOR));
+    $("term-find-x").addEventListener("click", termFindClose);
+  }
+
+  // ---------- Comandos favoritos (snippets) — compartidos con escritorio ----------
+  const SNIP_KEY = "wt_snippets";
+  function loadSnippets() { try { const r = JSON.parse(localStorage.getItem(SNIP_KEY) || "[]"); return Array.isArray(r) ? r : []; } catch (_) { return []; } }
+  function saveSnippets(a) { try { localStorage.setItem(SNIP_KEY, JSON.stringify(a)); } catch (_) {} renderSnippets(); }
+  function renderSnippets() {
+    const box = $("kb-snips"); if (!box) return;
+    box.innerHTML = "";
+    loadSnippets().forEach((s, i) => {
+      const b = document.createElement("button"); b.className = "kb kb-snip";
+      b.textContent = s.label || s.cmd; b.dataset.snip = String(i);
+      box.appendChild(b);
+    });
+  }
+  function runSnippet(i) { const s = loadSnippets()[i]; if (s) sendRaw(s.cmd + (s.enter ? "\r" : "")); }
+  function openSnipModal() {
+    renderSnipList(); $("snip-modal").hidden = false;
+    setTimeout(() => { try { $("snip-new-label").focus(); } catch (_) {} }, 0);
+  }
+  function renderSnipList() {
+    const list = $("snip-list"); if (!list) return;
+    const arr = loadSnippets();
+    list.innerHTML = arr.length ? "" : '<div class="snip-empty">Aún no hay comandos. Añade uno abajo.</div>';
+    arr.forEach((s, i) => {
+      const row = document.createElement("div"); row.className = "snip-row";
+      const meta = document.createElement("div"); meta.className = "snip-meta";
+      const lab = document.createElement("span"); lab.className = "snip-lab"; lab.textContent = s.label || s.cmd;
+      const cmd = document.createElement("span"); cmd.className = "snip-cmd"; cmd.textContent = s.cmd + (s.enter ? " ⏎" : "");
+      meta.appendChild(lab); meta.appendChild(cmd);
+      const del = document.createElement("button"); del.className = "tbtn"; del.innerHTML = icon("trash-2"); del.title = "Eliminar";
+      del.addEventListener("click", () => { const a = loadSnippets(); a.splice(i, 1); saveSnippets(a); renderSnipList(); });
+      row.appendChild(meta); row.appendChild(del); list.appendChild(row);
+    });
+  }
+  function setupSnippets() {
+    renderSnippets();
+    const m = $("snip-modal"); if (!m || m.dataset.ready) return; m.dataset.ready = "1";
+    const close = () => { m.hidden = true; };
+    $("snip-close").addEventListener("click", close);
+    m.addEventListener("click", (e) => { if (e.target === m) close(); });
+    $("snip-add-btn").addEventListener("click", () => {
+      const cmd = $("snip-new-cmd").value; if (!cmd.trim()) { $("snip-new-cmd").focus(); return; }
+      const a = loadSnippets(); a.push({ label: $("snip-new-label").value.trim() || cmd.trim(), cmd, enter: $("snip-new-enter").checked });
+      saveSnippets(a); $("snip-new-label").value = ""; $("snip-new-cmd").value = ""; renderSnipList(); $("snip-new-label").focus();
+    });
+  }
+
   // ---------- Terminal (solo render; toda la entrada va por compose/keybar) ----------
   function initTerminal() {
     if (term) { refit(); return; }
@@ -173,12 +266,15 @@
     });
     fitAddon = new FitAddon.FitAddon();
     term.loadAddon(fitAddon);
+    try { searchAddon = new SearchAddon.SearchAddon(); term.loadAddon(searchAddon); } catch (_) {}
     term.open($("term"));
+    tryWebgl(term);   // renderer GPU si hay soporte; si no, DOM
     // Evita que tocar la terminal abra el teclado del sistema (entrada por compose).
     try { if (term.textarea) { term.textarea.readOnly = true; term.textarea.tabIndex = -1; term.textarea.setAttribute("inputmode", "none"); } } catch (_) {}
     refit();
     requestAnimationFrame(refit);
     setupTouchScroll();
+    setupTermFind();
     window.addEventListener("resize", refit);
     // El teclado virtual cambia el viewport: reajustar para no descuadrar filas/cols.
     if (window.visualViewport) window.visualViewport.addEventListener("resize", refit);
@@ -313,13 +409,24 @@
       if (k.id) b.id = k.id; else b.setAttribute("data-seq", k.seq);
       bar.appendChild(b);
     });
+    // Búsqueda + comandos favoritos
+    const sep = document.createElement("span"); sep.className = "kb-sep"; bar.appendChild(sep);
+    const find = document.createElement("button"); find.className = "kb"; find.id = "kb-find"; find.innerHTML = icon("search"); find.title = "Buscar";
+    bar.appendChild(find);
+    const snips = document.createElement("span"); snips.id = "kb-snips"; snips.className = "kb-snips"; bar.appendChild(snips);
+    const star = document.createElement("button"); star.className = "kb kb-snip-add"; star.id = "kb-snip-add"; star.textContent = "★"; star.title = "Comandos favoritos";
+    bar.appendChild(star);
     bar.addEventListener("click", (e) => {
-      const btn = e.target.closest("button.kb"); if (!btn) return;
+      const btn = e.target.closest("button.kb, button.kb-snip"); if (!btn) return;
       if (btn.id === "kb-ctrl") { setCtrl(!ctrlPending); return; }
+      if (btn.id === "kb-find") { termFindToggle(); return; }
+      if (btn.id === "kb-snip-add") { openSnipModal(); return; }
+      if (btn.classList.contains("kb-snip")) { runSnippet(parseInt(btn.dataset.snip, 10)); return; }
       let seq = btn.getAttribute("data-seq") || "";
       if (ctrlPending && seq.length === 1) { seq = toCtrl(seq); setCtrl(false); }
       sendRaw(seq);
     });
+    setupSnippets();
   }
 
   // ---------- Compose (escribir / dictar → enviar línea) ----------

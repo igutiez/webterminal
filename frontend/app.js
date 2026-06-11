@@ -500,6 +500,25 @@
     if (term) term.focus();
   }
 
+  // Renderer GPU (WebGL). Más fluido en scroll y sesiones grandes. Si el navegador
+  // no lo soporta o pierde el contexto, se descarta y xterm vuelve solo al DOM.
+  function tryWebgl(t) {
+    try {
+      if (typeof WebglAddon === "undefined") return;
+      const addon = new WebglAddon.WebglAddon();
+      addon.onContextLoss(() => { try { addon.dispose(); } catch (_) {} });
+      t.loadAddon(addon);
+    } catch (_) { /* sin WebGL: DOM por defecto */ }
+  }
+
+  // Colores de resaltado de la búsqueda (no activo / activo), en la paleta.
+  const _FIND_DECOR = {
+    decorations: {
+      matchBackground: "#3a5a7a", matchOverviewRuler: "#58c4ff",
+      activeMatchBackground: "#58c4ff", activeMatchColorOverviewRuler: "#58c4ff",
+    },
+  };
+
   function initTerminal() {
     if (term) return;
     term = new Terminal({
@@ -516,7 +535,10 @@
     term.loadAddon(new WebLinksAddon.WebLinksAddon());
     term.loadAddon(searchAddon);
     term.open($("terminal-container"));
-    // DOM renderer (default) — scroll y selección fiables. (CanvasAddon daba problemas de scroll.)
+    tryWebgl(term);   // renderer GPU si el dispositivo lo soporta (si no, DOM)
+    // Renderer: WebGL si hay soporte; si falla, el DOM por defecto. El scroll lo
+    // gestiona tmux vía eventos SGR que genera el core de xterm, no el renderer,
+    // así que WebGL no afecta al scroll (a diferencia del viejo CanvasAddon).
     // Scroll con rueda: lo gestiona tmux. xterm.js convierte cada wheel en un SGR mouse
     // event que tmux recibe; con `set -g mouse on` + `bind -n WheelUpPane` entra en copy-mode
     // si no hay TUI activa, o reenvía al app (Claude, vim, htop) si la hay.
@@ -576,14 +598,11 @@
       if ((ev.ctrlKey && ev.code === "KeyV") || (ev.shiftKey && ev.code === "Insert")) {
         pasteFromClipboard(); return false;
       }
-      // Buscar: Ctrl+Shift+F
-      if (ev.ctrlKey && ev.shiftKey && ev.code === "KeyF") {
-        uiPrompt({ icon: "terminal", title: "Buscar en la terminal", placeholder: "texto a buscar…" })
-          .then((q) => { if (q) searchAddon.findNext(q); });
-        return false;
-      }
+      // Buscar: Ctrl+Shift+F abre la barra de búsqueda flotante.
+      if (ev.ctrlKey && ev.shiftKey && ev.code === "KeyF") { termFindOpen(); return false; }
       return true;
     });
+    setupTermFind();
     $("font-dec").addEventListener("click", () => changeFont(-1));
     $("font-inc").addEventListener("click", () => changeFont(1));
 
@@ -633,6 +652,7 @@
 
     if (isMobile()) document.body.classList.add("is-mobile");
     setupKeybar();
+    setupSnippets();
     setupFiles();
     setupVoice();
     setupAI();
@@ -652,6 +672,119 @@
         return true;
       });
     } catch (_) {}
+  }
+
+  // ---------- BÚSQUEDA EN LA TERMINAL (barra flotante) ----------
+  let _termFindReady = false;
+  function termFindOpen() {
+    const bar = $("term-find"), inp = $("term-find-input");
+    if (!bar || !searchAddon) return;
+    bar.hidden = false;
+    inp.focus(); inp.select();
+    if (inp.value) termFindRun(inp.value, true);
+  }
+  function termFindClose() {
+    const bar = $("term-find");
+    if (bar) bar.hidden = true;
+    try { searchAddon.clearDecorations(); } catch (_) {}
+    if (term) term.focus();
+  }
+  function termFindRun(q, incremental) {
+    if (!searchAddon) return;
+    if (!q) { try { searchAddon.clearDecorations(); } catch (_) {} $("term-find-count").textContent = ""; return; }
+    try { searchAddon.findNext(q, { ..._FIND_DECOR, incremental: !!incremental }); } catch (_) {}
+  }
+  function setupTermFind() {
+    if (_termFindReady) return; _termFindReady = true;
+    const inp = $("term-find-input"); if (!inp) return;
+    // Contador de resultados (la SearchAddon lo emite con decorations activas).
+    try {
+      searchAddon.onDidChangeResults((e) => {
+        const c = $("term-find-count");
+        if (!e || e.resultCount === undefined) { c.textContent = ""; return; }
+        c.textContent = e.resultCount ? `${e.resultIndex + 1}/${e.resultCount}` : "0/0";
+      });
+    } catch (_) {}
+    inp.addEventListener("input", () => termFindRun(inp.value, true));
+    inp.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); e.shiftKey ? searchAddon.findPrevious(inp.value, _FIND_DECOR) : searchAddon.findNext(inp.value, _FIND_DECOR); }
+      else if (e.key === "Escape") { e.preventDefault(); termFindClose(); }
+    });
+    $("term-find-next").addEventListener("click", () => { searchAddon.findNext(inp.value, _FIND_DECOR); inp.focus(); });
+    $("term-find-prev").addEventListener("click", () => { searchAddon.findPrevious(inp.value, _FIND_DECOR); inp.focus(); });
+    $("term-find-x").addEventListener("click", termFindClose);
+  }
+
+  // ---------- COMANDOS FAVORITOS (snippets en la keybar) ----------
+  // Guardados en localStorage como [{label, cmd, enter}]. Clic en un chip => envía
+  // el comando al PTY (con Intro si enter=true). Editables desde un modal.
+  const SNIP_KEY = "wt_snippets";
+  function loadSnippets() {
+    try { const r = JSON.parse(localStorage.getItem(SNIP_KEY) || "[]"); return Array.isArray(r) ? r : []; } catch (_) { return []; }
+  }
+  function saveSnippets(arr) { try { localStorage.setItem(SNIP_KEY, JSON.stringify(arr)); } catch (_) {} renderSnippets(); }
+  function renderSnippets() {
+    const box = $("kb-snips"); if (!box) return;
+    box.innerHTML = "";
+    loadSnippets().forEach((s, i) => {
+      const b = document.createElement("button");
+      b.className = "kb kb-snip"; b.textContent = s.label || s.cmd;
+      b.title = s.cmd + (s.enter ? " ⏎" : "");
+      b.dataset.snip = String(i);
+      box.appendChild(b);
+    });
+  }
+  function runSnippet(i) {
+    const s = loadSnippets()[i]; if (!s) return;
+    sendRaw(s.cmd + (s.enter ? "\r" : ""));
+    if (term) term.focus();
+  }
+  function setupSnippets() {
+    renderSnippets();
+    const box = $("kb-snips");
+    if (box) box.addEventListener("click", (e) => {
+      const b = e.target.closest("button.kb-snip"); if (!b) return;
+      runSnippet(parseInt(b.dataset.snip, 10));
+    });
+    const add = $("kb-snip-add"); if (add) add.addEventListener("click", openSnipModal);
+    // Modal de gestión
+    const m = $("snip-modal");
+    const close = () => { m.hidden = true; };
+    $("snip-close").addEventListener("click", close);
+    m.addEventListener("mousedown", (e) => { if (e.target === m) close(); });
+    m.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
+    $("snip-add-btn").addEventListener("click", () => {
+      const label = $("snip-new-label").value.trim();
+      const cmd = $("snip-new-cmd").value;
+      if (!cmd.trim()) { $("snip-new-cmd").focus(); return; }
+      const arr = loadSnippets();
+      arr.push({ label: label || cmd.trim(), cmd, enter: $("snip-new-enter").checked });
+      saveSnippets(arr);
+      $("snip-new-label").value = ""; $("snip-new-cmd").value = "";
+      renderSnipList(); $("snip-new-label").focus();
+    });
+  }
+  function openSnipModal() {
+    renderSnipList();
+    $("snip-modal").hidden = false;
+    setTimeout(() => { try { $("snip-new-label").focus(); } catch (_) {} }, 0);
+  }
+  function renderSnipList() {
+    const list = $("snip-list"); if (!list) return;
+    const arr = loadSnippets();
+    list.innerHTML = arr.length ? "" : '<div class="snip-empty">Aún no hay comandos. Añade uno abajo.</div>';
+    arr.forEach((s, i) => {
+      const row = document.createElement("div"); row.className = "snip-row";
+      const meta = document.createElement("div"); meta.className = "snip-meta";
+      const lab = document.createElement("span"); lab.className = "snip-lab"; lab.textContent = s.label || s.cmd;
+      const cmd = document.createElement("span"); cmd.className = "snip-cmd"; cmd.textContent = s.cmd + (s.enter ? " ⏎" : "");
+      meta.appendChild(lab); meta.appendChild(cmd);
+      const del = document.createElement("button"); del.className = "fop del"; del.title = "Eliminar";
+      del.innerHTML = '<svg class="ic"><use href="#ic-trash-2"/></svg>';
+      del.addEventListener("click", () => { const a = loadSnippets(); a.splice(i, 1); saveSnippets(a); renderSnipList(); });
+      row.appendChild(meta); row.appendChild(del);
+      list.appendChild(row);
+    });
   }
 
   // ---------- BARRA DE TECLAS ESPECIALES + VENTANAS TMUX ----------
@@ -1277,6 +1410,7 @@
       t.loadAddon(fit);
       t.loadAddon(new WebLinksAddon.WebLinksAddon());
       t.open($("terminal-container-2"));
+      tryWebgl(t);
       t.onData((d) => { if (ws2 && ws2.readyState === WebSocket.OPEN) ws2.send(d); });
       t.onSelectionChange(() => { const s = t.getSelection(); if (s) navigator.clipboard.writeText(s).catch(() => {}); });
     }

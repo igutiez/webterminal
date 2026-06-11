@@ -27,9 +27,10 @@
   <script src="https://unpkg.com/xterm-addon-web-links@0.9.0/lib/xterm-addon-web-links.js"></script>
   <script src="https://unpkg.com/xterm-addon-search@0.13.0/lib/xterm-addon-search.js"></script>
   <script src="https://unpkg.com/xterm-addon-canvas@0.5.0/lib/xterm-addon-canvas.js"></script>
+  <script src="https://unpkg.com/xterm-addon-webgl@0.16.0/lib/xterm-addon-webgl.js"></script>
 
   <link rel="stylesheet" href="hljs-dracula.css?v=1" />
-  <link rel="stylesheet" href="style.css?v=59" />
+  <link rel="stylesheet" href="style.css?v=60" />
 </head>
 <body>
   <!-- Sprite de iconos SVG (local, mismo aspecto en Safari/Chrome/iOS/Android). Lucide, ISC. -->
@@ -203,6 +204,14 @@
              La rellena JS (_updateTabsUI) al conectar. -->
         <div id="tabs" class="tabs"></div>
         <div id="panes">
+          <!-- Barra de búsqueda del terminal (Ctrl+Mayús+F). Flotante arriba a la derecha. -->
+          <div id="term-find" class="viewer-find" hidden>
+            <input id="term-find-input" type="text" placeholder="Buscar en la terminal…" autocomplete="off" spellcheck="false" />
+            <span id="term-find-count" class="viewer-find-count"></span>
+            <button id="term-find-prev" class="vbtn" title="Anterior (Mayús+Intro)"><svg class="ic"><use href="#ic-arrow-up"/></svg></button>
+            <button id="term-find-next" class="vbtn" title="Siguiente (Intro)"><svg class="ic"><use href="#ic-arrow-down"/></svg></button>
+            <button id="term-find-x" class="vbtn" title="Cerrar (Esc)"><svg class="ic"><use href="#ic-x"/></svg></button>
+          </div>
           <div id="terminal-container"></div>
           <div id="terminal-container-2" class="term2" hidden></div>
           <div id="panes-divider" class="panes-divider" title="Arrastra para redimensionar · doble clic para 50/50" hidden></div>
@@ -268,6 +277,10 @@
       <button class="kb kb-tmux" data-seq="&#2;p" title="Ventana anterior">◀</button>
       <button class="kb kb-tmux" data-seq="&#2;n" title="Ventana siguiente">▶</button>
       <button class="kb kb-tmux" data-seq="&#2;:kill-window&#13;" title="Cerrar ventana actual"><svg class="ic"><use href="#ic-x"/></svg></button>
+      <span class="kb-sep"></span>
+      <!-- Comandos favoritos (snippets). Los rellena JS desde localStorage. -->
+      <span id="kb-snips" class="kb-snips"></span>
+      <button class="kb kb-snip-add" id="kb-snip-add" title="Comandos favoritos">★</button>
     </div>
     <input id="img-file" type="file" multiple style="display:none" />
     <div id="toast" class="toast"></div>
@@ -352,6 +365,25 @@
     <button id="img-modal-close" class="img-modal-close" title="Cerrar (Esc)"><svg class="ic"><use href="#ic-x"/></svg></button>
   </div>
 
+  <!-- Gestor de comandos favoritos (snippets) -->
+  <div id="snip-modal" class="ui-modal" hidden>
+    <div class="ui-modal-box snip-box" role="dialog" aria-modal="true" aria-labelledby="snip-title">
+      <div class="ui-modal-icon">★</div>
+      <div id="snip-title" class="ui-modal-title">Comandos favoritos</div>
+      <div class="ui-modal-msg">Atajos que aparecen en la barra de teclas. Clic = enviar a la terminal.</div>
+      <div id="snip-list" class="snip-list"></div>
+      <div class="snip-add">
+        <input id="snip-new-label" class="ui-modal-input" type="text" placeholder="Etiqueta (p. ej. git status)" autocomplete="off" />
+        <input id="snip-new-cmd" class="ui-modal-input" type="text" placeholder="Comando (p. ej. git status)" autocomplete="off" spellcheck="false" />
+        <label class="snip-enter"><input id="snip-new-enter" type="checkbox" checked /> Ejecutar al pulsar (añade Intro)</label>
+        <button id="snip-add-btn" class="ui-modal-btn primary" type="button">Añadir</button>
+      </div>
+      <div class="ui-modal-actions">
+        <button id="snip-close" class="ui-modal-btn" type="button">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal propio: sustituye a los prompt/confirm nativos del navegador -->
   <div id="ui-modal" class="ui-modal" hidden>
     <div class="ui-modal-box" role="dialog" aria-modal="true" aria-labelledby="ui-modal-title">
@@ -367,6 +399,6 @@
   </div>
 
   <script src="highlight.min.js?v=1"></script>
-  <script src="app.js?v=62"></script>
+  <script src="app.js?v=63"></script>
 </body>
 </html>

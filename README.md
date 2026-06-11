@@ -7,6 +7,7 @@
 ## Características / Features
 
 - **Sesiones persistentes (tmux)** — la sesión sobrevive a cortes de red y al cierre del navegador; reconectas y sigues donde estabas. Varias sesiones con pestañas, y vista dividida con dos terminales.
+- **Terminal potente**: renderer WebGL (con fallback automático a DOM), búsqueda en el terminal (`Ctrl+Mayús+F`) con resaltado y contador, y **comandos favoritos** editables que aparecen como botones para lanzar con un clic.
 - **Explorador de archivos (SFTP)** sobre tu propia sesión SSH: navegar, subir/descargar, crear, renombrar, borrar, y un **editor con resaltado de sintaxis**, borradores automáticos y detección de conflictos.
 - **Móvil de verdad** (`/m`): PWA instalable, barra de teclas especiales (Esc, Ctrl, flechas…), dictado por voz, scroll táctil del histórico incluso dentro de tmux/Claude Code.
 - **Pensada para IA**: sube una captura y la ruta se inyecta en la terminal (para Claude Code), proxy opcional a modelos por API (DeepSeek/Kimi) para editar archivos, y preview de webapps locales en una pestaña.
