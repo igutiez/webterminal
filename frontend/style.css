@@ -133,8 +133,7 @@ html, body {
 #topbar button:hover { border-color: var(--accent); color: var(--accent); background: rgba(var(--accent-rgb), .08); }
 #topbar button.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 
-/* Equipación B: botón "modo remoto" activo + badge en la barra izquierda. */
-#away-btn.on { background: var(--yellow); color: #1a1400; border-color: var(--yellow); box-shadow: 0 0 10px rgba(var(--accent-rgb), .0), 0 0 12px color-mix(in srgb, var(--yellow), transparent 35%); }
+/* Equipación B: badge "REMOTO" (automático) en la barra izquierda. */
 .away-badge {
   font-family: var(--font-mono); font-size: 10.5px; font-weight: 700; letter-spacing: .04em;
   color: var(--yellow); border: 1px solid color-mix(in srgb, var(--yellow), transparent 55%);

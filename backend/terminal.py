@@ -37,6 +37,12 @@ RECV_CHUNK = 1024
 TMUX_ENABLED = os.environ.get("WEBTERMINAL_TMUX", "1").lower() not in ("0", "false", "no", "")
 TMUX_PREFIX = os.environ.get("WEBTERMINAL_TMUX_SESSION", "web")
 
+# "Equipación B": detectamos automáticamente si el panel activo está corriendo un
+# cliente de acceso remoto (has hecho `ssh` a otra máquina). El comando en primer
+# plano del panel (#{pane_current_command}) lo dice sin depender de prompts/títulos.
+REMOTE_CMDS = {"ssh", "mosh", "mosh-client", "sshpass", "autossh", "et", "telnet"}
+REMOTE_POLL_SECS = 1.5
+
 
 def _slug(s: str | None) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "_", (s or "").lower()).strip("_")
@@ -129,11 +135,64 @@ class SSHTerminal:
         """Pump both directions until either side ends; then clean up."""
         t_out = asyncio.create_task(self._ssh_to_ws())
         t_in = asyncio.create_task(self._ws_to_ssh())
-        done, pending = await asyncio.wait({t_out, t_in}, return_when=asyncio.FIRST_COMPLETED)
+        tasks = {t_out, t_in}
+        if TMUX_ENABLED:
+            tasks.add(asyncio.create_task(self._remote_watch()))
+        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         for task in pending:
             task.cancel()
         await asyncio.gather(*pending, return_exceptions=True)
         self.close()
+
+    # ---- "Equipación B": vigila si el panel activo está en un server remoto ----
+    def _remote_probe(self) -> tuple:
+        """(on, host): ¿el panel activo de la sesión corre ssh/mosh/…? Pregunta a
+        tmux por el comando en primer plano y el título del panel (que, al hacer
+        ssh, suele pasar a 'user@host')."""
+        # Dos consultas LIMPIAS (sin separadores raros que se rompen por el camino):
+        # primero el comando en primer plano; si es remoto, luego el título.
+        try:
+            cmd = self._tmux("display-message", "-p", "-t", self.session,
+                             "#{pane_current_command}").strip().splitlines()
+        except Exception:
+            return (False, None)
+        cmd = cmd[0].strip().lower() if cmd else ""
+        on = cmd in REMOTE_CMDS
+        if not on:
+            return (False, None)
+        host = None
+        try:
+            title = self._tmux("display-message", "-p", "-t", self.session, "#{pane_title}").strip()
+        except Exception:
+            title = ""
+        if title:
+            title = title.splitlines()[0].strip()
+            m = re.search(r"@([A-Za-z0-9][A-Za-z0-9._-]*)", title)   # "user@host: ~"
+            if m:
+                host = m.group(1)
+            elif re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{1,63}", title):  # título = host pelado
+                host = title
+        return (on, host)
+
+    async def _remote_watch(self) -> None:
+        """Sondea periódicamente y avisa al cliente SOLO cuando cambia el estado.
+        Envía el primer estado de inmediato (al conectar) para no dejar tinte viejo."""
+        last = None
+        try:
+            while not self._closed:
+                state = await asyncio.to_thread(self._remote_probe)
+                if state != last:
+                    last = state
+                    try:
+                        await self.websocket.send_text(json.dumps(
+                            {"type": "remote", "on": state[0], "host": state[1]}))
+                    except Exception:
+                        break
+                await asyncio.sleep(REMOTE_POLL_SECS)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            log.info("remote-watch ended for %s: %s", self.username, exc)
 
     async def _ssh_to_ws(self) -> None:
         try:

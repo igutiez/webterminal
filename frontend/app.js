@@ -12,13 +12,13 @@
   let currentSession = null;    // label de la sesión tmux activa (null = principal)
   let fsid = null;              // id de sesión para el explorador de archivos (SFTP)
 
-  // Equipación B: cuando estás en un server remoto (ssh dentro de la terminal) el
-  // fondo cambia para que se note. homeHost = primer host visto al conectar (el
-  // local); awayManual fuerza el modo a mano (null = automático por título).
+  // Equipación B (automática): cuando una terminal está en un server remoto, su
+  // fondo se tiñe. awayMode/remoteHost = estado de la terminal PRINCIPAL; la 2ª del
+  // split lleva el suyo dentro de T2. _focusedTerm dice cuál tiene el foco (para el
+  // badge de arriba): "main" o "sec".
   let awayMode = false;
-  let homeHost = null;
   let remoteHost = null;
-  let awayManual = null;        // null = auto · true/false = forzado por el usuario
+  let _focusedTerm = "main";
 
   const $ = (id) => document.getElementById(id);
   const SCREENS = ["login-screen", "forgot-screen", "reset-screen", "ssh-screen", "account-screen", "terminal-screen"];
@@ -593,11 +593,13 @@
   let activeThemeId = DEFAULT_THEME;
   function activeTheme() { return THEMES[activeThemeId] || THEMES[DEFAULT_THEME]; }
 
-  // Paleta xterm del tema activo (con la equipación B aplicada si procede).
-  function xtermTheme() {
+  // Paleta xterm del tema activo. `away` tiñe SOLO el fondo de ESA terminal (la que
+  // está conectada en remoto), sin tocar el resto. Es por-terminal: en vista
+  // dividida una puede estar en remoto y la otra no.
+  function termPalette(away) {
     const th = activeTheme();
     const t = { ...th.term };
-    if (awayMode) t.background = th.bgAway;   // fondo distinto en server remoto
+    if (away) t.background = th.bgAway;
     return t;
   }
 
@@ -607,8 +609,9 @@
     if (!THEMES[id]) id = DEFAULT_THEME;
     activeThemeId = id;
     const th = THEMES[id], c = th.chrome, root = document.documentElement;
-    const bg = awayMode ? th.bgAway : c.bg;
-    root.style.setProperty("--bg", bg);
+    // OJO: el chrome (topbar, paneles, fondo de la app) usa SIEMPRE el bg del tema.
+    // La "equipación B" solo tiñe el FONDO DEL TERMINAL (vía termPalette), no el resto.
+    root.style.setProperty("--bg", c.bg);
     root.style.setProperty("--panel", c.panel);
     root.style.setProperty("--panel-2", c.panel2);
     root.style.setProperty("--border", c.border);
@@ -622,13 +625,13 @@
     root.style.setProperty("--yellow", c.yellow);
     root.classList.toggle("theme-light", !!th.light);
     const meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute("content", bg);
+    if (meta) meta.setAttribute("content", c.bg);
     _FIND_DECOR.decorations.matchBackground = c.border;
     _FIND_DECOR.decorations.matchOverviewRuler = c.accent;
     _FIND_DECOR.decorations.activeMatchBackground = c.accent;
     _FIND_DECOR.decorations.activeMatchColorOverviewRuler = c.accent;
-    if (term) term.options.theme = xtermTheme();
-    T2.setTheme(xtermTheme());
+    if (term) term.options.theme = termPalette(awayMode);
+    T2.refresh();
     updateThemePicker();
     if (opts && opts.persist) saveTheme(id);
   }
@@ -649,39 +652,30 @@
     } catch (_) {}
   }
 
-  // ---------- Equipación B: fondo distinto al estar en un server remoto ----------
-  // El título de la terminal (OSC) suele traer "user@host". El primer host que
-  // vemos al conectar es la máquina local (homeHost); si luego cambia (hiciste
-  // `ssh` a otra), activamos el modo remoto. Es heurística (depende de que el
-  // prompt remoto reporte título); el botón/atajo manual es la red de seguridad.
-  function parseHost(title) {
-    if (!title) return null;
-    const m = title.match(/@([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)/);
-    return m ? m[1] : null;   // sin "@" (apps TUI: vim, claude…): no tocamos nada
-  }
-  function handleTitle(title) {
-    const host = parseHost(title);
-    if (!host) return;
-    if (homeHost === null) homeHost = host;   // primer host visto = la máquina local
-    remoteHost = host;
-    if (awayManual === null) setAway(host !== homeHost, host);
-    else updateAwayBadge();
-  }
-  function setAway(on, host) {
+  // ---------- Equipación B: tinte automático al estar en un server remoto ----------
+  // 100% AUTOMÁTICO: el backend pregunta a tmux qué proceso corre en primer plano
+  // (#{pane_current_command}); si es `ssh`/`mosh`/… estás en un remoto y nos manda
+  // {type:"remote", on, host}. El tinte va SOLO al fondo de ESA terminal (la que
+  // está en remoto), y es por-terminal (en split una puede estar en remoto y la
+  // otra no). El badge de arriba refleja la terminal que tiene el FOCO ahora mismo.
+  function setMainAway(on, host) {
     if (host) remoteHost = host;
-    if (awayMode !== on) { awayMode = on; applyTheme(activeThemeId); }
+    if (awayMode !== on) { awayMode = on; if (term) term.options.theme = termPalette(awayMode); }
     updateAwayBadge();
   }
-  function toggleAway() { awayManual = !awayMode; setAway(awayManual, remoteHost); }
-  function resetAway() { awayManual = null; homeHost = null; remoteHost = null; setAway(false, null); }
+  function resetAway() { awayMode = false; remoteHost = null; if (term) term.options.theme = termPalette(false); updateAwayBadge(); }
+  // Estado remoto de la terminal con el foco (main o la 2ª del split).
+  function focusedRemote() {
+    if (_focusedTerm === "sec") return { on: T2.isAway(), host: T2.remoteHost() };
+    return { on: awayMode, host: remoteHost };
+  }
   function updateAwayBadge() {
+    const r = focusedRemote();
     const b = $("away-badge");
     if (b) {
-      b.style.display = awayMode ? "" : "none";
-      b.textContent = "⬤ REMOTO" + (awayMode && remoteHost ? " · " + remoteHost : "");
+      b.style.display = r.on ? "" : "none";
+      b.textContent = "⬤ REMOTO" + (r.on && r.host ? " · " + r.host : "");
     }
-    const btn = $("away-btn");
-    if (btn) { btn.classList.toggle("on", awayMode); btn.setAttribute("aria-pressed", awayMode ? "true" : "false"); }
   }
 
   // ---------- Selector de tema (popover de swatches en la barra superior) ----------
@@ -721,7 +715,7 @@
   function initTerminal() {
     if (term) return;
     term = new Terminal({
-      theme: xtermTheme(),
+      theme: termPalette(awayMode),
       fontFamily: "'JetBrains Mono', monospace", fontSize: 14, lineHeight: 1.0,
       scrollSensitivity: 3,
       cursorBlink: true, cursorStyle: "block", scrollback: 10000, allowProposedApi: true,
@@ -732,7 +726,6 @@
     term.loadAddon(new WebLinksAddon.WebLinksAddon());
     term.loadAddon(searchAddon);
     term.open($("terminal-container"));
-    term.onTitleChange(handleTitle);   // equipación B: detecta el host por el título
     tryWebgl(term);   // renderer GPU si el dispositivo lo soporta (si no, DOM)
     // Renderer: WebGL si hay soporte; si falla, el DOM por defecto. El scroll lo
     // gestiona tmux vía eventos SGR que genera el core de xterm, no el renderer,
@@ -798,9 +791,6 @@
       }
       // Buscar: Ctrl+Shift+F abre la barra de búsqueda flotante.
       if (ev.ctrlKey && ev.shiftKey && ev.code === "KeyF") { termFindOpen(); return false; }
-      // Equipación B: Ctrl+Shift+B. Se captura aquí (return false) para que NO
-      // llegue al PTY (Ctrl+B es el prefijo de tmux).
-      if (ev.ctrlKey && ev.shiftKey && ev.code === "KeyB") { toggleAway(); return false; }
       return true;
     });
     setupTermFind();
@@ -809,19 +799,17 @@
     const findBtn = $("find-btn");
     if (findBtn) findBtn.addEventListener("click", termFindOpen);
 
-    // --- Tema (look&feel) y equipación B (modo remoto) ---
+    // --- Selector de tema (look&feel) ---
     const themeBtn = $("theme-btn");
     if (themeBtn) themeBtn.addEventListener("click", (e) => { e.stopPropagation(); toggleThemePop(); });
-    const awayBtn = $("away-btn");
-    if (awayBtn) awayBtn.addEventListener("click", toggleAway);
     // Cerrar el popover de temas al hacer clic fuera o con Escape.
     document.addEventListener("click", (e) => {
       const pop = $("theme-pop");
       if (pop && pop.classList.contains("open") && !pop.contains(e.target) && e.target !== themeBtn && !themeBtn.contains(e.target)) closeThemePop();
     });
-    // Cierra el popover con Escape. (El atajo Ctrl+Mayús+B lo captura xterm,
-    // para que Ctrl+B no llegue al prefijo de tmux.)
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeThemePop(); });
+    // El badge "REMOTO" sigue al foco: al enfocar la terminal principal, refléjala.
+    if (term && term.textarea) term.textarea.addEventListener("focus", () => { _focusedTerm = "main"; updateAwayBadge(); });
 
     // --- Pegar imagen (Ctrl+V con imagen en el portapapeles) ---
     // A nivel de DOCUMENTO en fase de captura: así interceptamos el pegado antes
@@ -1624,10 +1612,17 @@
   // tmux, pinta, teclea y se redimensiona. Conexión perezosa; se cierra al salir.
   const T2 = (function () {
     let t = null, fit = null, ws2 = null, sess = null, recon = 0, rTimer = null, closed = true, pending = "";
+    let away = false, host = null;   // equipación B propia de esta 2ª terminal
+    function repaint() { if (t) t.options.theme = termPalette(away); }
+    function setRemote(on, h) {
+      host = on ? (h || null) : null;
+      if (away !== on) { away = on; repaint(); }
+      updateAwayBadge();   // por si esta 2ª terminal es la enfocada
+    }
     function ensure() {
       if (t) return;
       t = new Terminal({
-        theme: xtermTheme(),
+        theme: termPalette(away),
         fontFamily: "'JetBrains Mono', monospace", fontSize: 14, lineHeight: 1.0,
         scrollSensitivity: 3, cursorBlink: true, cursorStyle: "block", scrollback: 10000, allowProposedApi: true,
       });
@@ -1638,6 +1633,8 @@
       tryWebgl(t);
       t.onData((d) => { if (ws2 && ws2.readyState === WebSocket.OPEN) ws2.send(d); });
       t.onSelectionChange(() => { const s = t.getSelection(); if (s) navigator.clipboard.writeText(s).catch(() => {}); });
+      // El badge "REMOTO" sigue al foco: al enfocar esta 2ª terminal, refléjala.
+      if (t.textarea) t.textarea.addEventListener("focus", () => { _focusedTerm = "sec"; updateAwayBadge(); });
     }
     function connect() {
       const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -1645,6 +1642,7 @@
       ws2.binaryType = "arraybuffer";
       ws2.onopen = () => {
         recon = 0;
+        setRemote(false, null);   // estado remoto se re-evalúa al llegar la señal del backend
         ws2.send(JSON.stringify({ ssh_user: sshUser, password: sshPassword, session: sess || undefined }));
         fitNow(); t.focus();
         // Comando en cola (p.ej. ejecutar un archivo): se manda cuando el shell ya está.
@@ -1652,7 +1650,13 @@
       };
       ws2.onmessage = (ev) => {
         if (ev.data instanceof ArrayBuffer) { t.write(new Uint8Array(ev.data)); return; }
-        if (ev.data && ev.data[0] === "{") { try { const m = JSON.parse(ev.data); if (m && (m.type === "tmux-sessions" || m.type === "fsid")) return; } catch (_) {} }
+        if (ev.data && ev.data[0] === "{") {
+          try {
+            const m = JSON.parse(ev.data);
+            if (m && m.type === "remote") { setRemote(!!m.on, m.host || null); return; }
+            if (m && (m.type === "tmux-sessions" || m.type === "fsid")) return;
+          } catch (_) {}
+        }
         t.write(ev.data);
       };
       ws2.onclose = (ev) => {
@@ -1679,8 +1683,10 @@
       sessionLabel() { return sess === null ? "principal" : sess; },
       fit: fitNow,
       focus() { if (t) t.focus(); },
-      // Repinta la 2ª terminal con la paleta del tema activo (si está creada).
-      setTheme(themeObj) { if (t) t.options.theme = themeObj; },
+      // Repinta con la paleta del tema activo (respetando su propia equipación B).
+      refresh() { repaint(); },
+      isAway() { return away; },
+      remoteHost() { return host; },
       // Manda datos al PTY de la 2ª terminal; si aún no está abierta, los encola.
       send(data) { if (ws2 && ws2.readyState === WebSocket.OPEN) ws2.send(data); else pending += data; },
       close() { closed = true; clearTimeout(rTimer); pending = ""; if (ws2) { try { ws2.onclose = null; ws2.close(); } catch (_) {} ws2 = null; } sess = null; },
@@ -2840,6 +2846,7 @@
     ws.onopen = () => {
       reconnectAttempts = 0;
       setStatus("connected", "conectado");
+      setMainAway(false, null);   // el backend reenvía el estado remoto de esta sesión enseguida
       ws.send(JSON.stringify({ ssh_user: sshUser, password: sshPassword, session: currentSession || undefined }));
       doFit(); term.focus();
     };
@@ -2852,6 +2859,7 @@
             const m = JSON.parse(ev.data);
             if (m && m.type === "tmux-sessions") { renderSessions(m.sessions || []); return; }
             if (m && m.type === "fsid") { fsid = m.fsid; requestSessions(); _restoreOpenTabs(); return; }
+            if (m && m.type === "remote") { setMainAway(!!m.on, m.host || null); return; }
           } catch (_) {}
         }
         term.write(ev.data);
