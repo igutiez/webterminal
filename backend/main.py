@@ -53,6 +53,12 @@ MAX_CONNECTIONS = int(os.environ.get("WEBTERMINAL_MAX_CONNECTIONS", "5"))
 RESET_TTL_MIN = 30
 MIN_PW_LEN = 8
 
+# Temas de look&feel disponibles (deben coincidir con THEMES en frontend/app.js).
+# El id se guarda por usuario; cualquier otro valor se rechaza.
+VALID_THEMES = frozenset({
+    "messor-night", "dracula", "nord", "gruvbox", "solarized-dark", "paper",
+})
+
 # Anti fuerza bruta de la contraseña del SISTEMA: tras MAX_SSH_FAILS contraseñas
 # erróneas seguidas, esa identidad web queda bloqueada LOCK_SECONDS antes de
 # poder volver a intentar abrir la terminal.
@@ -205,6 +211,28 @@ async def account_update(
 
     # Re-issue token (email/sub may have changed)
     return {"ok": True, "token": auth.create_access_token(email), "email": email}
+
+
+@app.get("/preferences")
+async def preferences_get(authorization: str | None = Header(default=None)):
+    """Preferencias de la cuenta (de momento, solo el tema). Se llama tras el
+    login para aplicar el look&feel elegido antes de abrir la terminal."""
+    email = _bearer(authorization)
+    return {"theme": db.get_theme(email)}
+
+
+@app.post("/preferences")
+async def preferences_set(
+    authorization: str | None = Header(default=None),
+    theme: str = Form(...),
+):
+    email = _bearer(authorization)
+    theme = (theme or "").strip()
+    if theme not in VALID_THEMES:
+        raise HTTPException(status_code=400, detail="Tema no válido")
+    db.set_theme(email, theme)
+    log.info("theme set web=%s theme=%s", email, theme)
+    return {"ok": True, "theme": theme}
 
 
 @app.post("/upload")

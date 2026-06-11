@@ -133,6 +133,41 @@ html, body {
 #topbar button:hover { border-color: var(--accent); color: var(--accent); background: rgba(var(--accent-rgb), .08); }
 #topbar button.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 
+/* Equipación B: botón "modo remoto" activo + badge en la barra izquierda. */
+#away-btn.on { background: var(--yellow); color: #1a1400; border-color: var(--yellow); box-shadow: 0 0 10px rgba(var(--accent-rgb), .0), 0 0 12px color-mix(in srgb, var(--yellow), transparent 35%); }
+.away-badge {
+  font-family: var(--font-mono); font-size: 10.5px; font-weight: 700; letter-spacing: .04em;
+  color: var(--yellow); border: 1px solid color-mix(in srgb, var(--yellow), transparent 55%);
+  background: color-mix(in srgb, var(--yellow), transparent 86%);
+  padding: 2px 8px; border-radius: 999px; white-space: nowrap;
+}
+
+/* Selector de tema: botón con popover de swatches. */
+.theme-wrap { position: relative; display: inline-flex; }
+.theme-pop {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 60;
+  display: none; flex-direction: column; gap: 2px; min-width: 188px; padding: 6px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-m);
+  box-shadow: var(--shadow-2);
+}
+.theme-pop.open { display: flex; }
+.theme-item {
+  display: flex !important; align-items: center; gap: 10px; width: 100%;
+  height: auto !important; min-width: 0 !important; padding: 7px 9px !important;
+  background: transparent !important; border: 1px solid transparent !important;
+  color: var(--text) !important; border-radius: var(--r-s) !important; cursor: pointer;
+  font-family: var(--font-ui); font-size: 13px; text-align: left;
+}
+.theme-item:hover { background: rgba(var(--accent-rgb), .10) !important; border-color: var(--border) !important; color: var(--text) !important; }
+.theme-item.active { border-color: var(--accent) !important; }
+.theme-item.active .nm { color: var(--accent); font-weight: 600; }
+.theme-item .sw {
+  width: 22px; height: 22px; border-radius: 6px; flex: 0 0 auto;
+  border: 1px solid rgba(255,255,255,.15); position: relative; overflow: hidden;
+}
+.theme-item .sw i { position: absolute; right: 0; bottom: 0; width: 11px; height: 11px; border-radius: 6px 0 5px 0; }
+.theme-item .nm { flex: 1 1 auto; }
+
 /* Iconos SVG del sprite local (#icon-sprite). Heredan el color del botón
    (stroke=currentColor) y escalan con su font-size. pointer-events:none para
    que el clic lo reciba el botón, no el <svg> (la delegación usa closest()). */
@@ -301,10 +336,12 @@ label.remember input { width: auto; margin: 0; accent-color: var(--accent); curs
   overflow-x: auto; white-space: nowrap;
 }
 #keybar::-webkit-scrollbar { height: 0; }
-body:not(.is-mobile) #keybar > .kb:not(.kb-snip):not(.kb-snip-add),
+body:not(.is-mobile) #keybar > .kb:not(.kb-snip):not(.kb-snip-add):not(.kb-bottom),
 body:not(.is-mobile) #keybar > .kb-tmux,
 body:not(.is-mobile) #keybar > .kb-sep { display: none; }
 body:not(.is-mobile) #keybar .kb { height: 26px; min-width: 0; font-size: 11.5px; font-weight: 600; }
+/* "Ir abajo": pegado al borde derecho de la keybar, en ambas plataformas. */
+#kb-bottom { margin-left: auto; flex: 0 0 auto; }
 /* En móvil el margen inferior (home indicator) lo pone la barra, no la pantalla. */
 body.is-mobile #terminal-screen { padding-bottom: 0; }
 body.is-mobile #keybar {

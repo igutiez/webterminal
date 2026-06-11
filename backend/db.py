@@ -34,6 +34,24 @@ def init_db():
             )
             """
         )
+        # Migración: preferencia de tema (look&feel) por usuario. SQLite no admite
+        # "ADD COLUMN IF NOT EXISTS", así que comprobamos primero la lista de columnas.
+        cols = {r["name"] for r in c.execute("PRAGMA table_info(users)")}
+        if "theme" not in cols:
+            c.execute("ALTER TABLE users ADD COLUMN theme TEXT")
+
+
+def get_theme(email: str):
+    """Devuelve el id de tema guardado del usuario, o None si no ha elegido."""
+    u = get_user(email)
+    return (u or {}).get("theme") or None
+
+
+def set_theme(email: str, theme: str) -> bool:
+    email = (email or "").strip().lower()
+    with _conn() as c:
+        cur = c.execute("UPDATE users SET theme = ? WHERE email = ?", (theme, email))
+        return cur.rowcount == 1
 
 
 def _hash_pw(password: str) -> str:

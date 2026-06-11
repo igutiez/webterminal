@@ -69,6 +69,9 @@
 <symbol id="ic-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z" /></symbol>
 <symbol id="ic-app-window" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2" /> <path d="M10 4v4" /> <path d="M2 8h20" /> <path d="M6 4v4" /></symbol>
 <symbol id="ic-external-link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6" /> <path d="M10 14 21 3" /> <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /></symbol>
+<symbol id="ic-palette" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.555C21.965 6.012 17.461 2 12 2Z"/></symbol>
+<symbol id="ic-server" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><path d="M6 6h.01"/><path d="M6 18h.01"/></symbol>
+<symbol id="ic-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
   </svg>
 
   <!-- LOGIN -->
@@ -161,9 +164,11 @@
       <div class="left">
         <span id="status-dot" class="dot dot-red"></span>
         <span id="status-text">desconectado</span>
+        <span id="away-badge" class="away-badge" style="display:none"></span>
       </div>
       <div class="center">MessorTerminal</div>
       <div class="right">
+        <button id="find-btn" title="Buscar en el terminal (Ctrl+Mayús+F)"><svg class="ic"><use href="#ic-search"/></svg></button>
         <button id="files-btn" title="Explorador de archivos (subir / descargar)"><svg class="ic"><use href="#ic-folder"/></svg></button>
         <button id="split-btn" title="Vista dividida: terminal y archivo a la vez"><svg class="ic"><use href="#ic-columns-2"/></svg></button>
         <button id="preview-btn" title="Previsualizar una webapp local (127.0.0.1:PUERTO)"><svg class="ic"><use href="#ic-app-window"/></svg></button>
@@ -174,6 +179,11 @@
         <button id="mic" title="Dictar por voz (hablar en vez de teclear)"><svg class="ic"><use href="#ic-mic"/></svg></button>
         <button id="paste" title="Pegar texto del portapapeles"><svg class="ic"><use href="#ic-clipboard"/></svg></button>
         <button id="img-upload" title="Subir archivo (o pega / arrastra cualquier archivo)"><svg class="ic"><use href="#ic-paperclip"/></svg></button>
+        <button id="away-btn" title="Equipación B: marcar/desmarcar que estás en un servidor remoto (Ctrl+Mayús+B)" aria-pressed="false"><svg class="ic"><use href="#ic-server"/></svg></button>
+        <div class="theme-wrap">
+          <button id="theme-btn" title="Tema (look &amp; feel)"><svg class="ic"><use href="#ic-palette"/></svg></button>
+          <div id="theme-pop" class="theme-pop"></div>
+        </div>
         <button id="font-dec" title="Reducir fuente">&minus;</button>
         <span id="font-size">14</span>
         <button id="font-inc" title="Aumentar fuente">&plus;</button>
@@ -281,6 +291,8 @@
       <!-- Comandos favoritos (snippets). Los rellena JS desde localStorage. -->
       <span id="kb-snips" class="kb-snips"></span>
       <button class="kb kb-snip-add" id="kb-snip-add" title="Comandos favoritos">★</button>
+      <!-- Ir al fondo: tras hacer scroll hacia arriba, vuelve al prompt vivo. -->
+      <button class="kb kb-bottom" id="kb-bottom" title="Ir abajo del todo (volver al prompt)"><svg class="ic"><use href="#ic-arrow-down"/></svg></button>
     </div>
     <input id="img-file" type="file" multiple style="display:none" />
     <div id="toast" class="toast"></div>

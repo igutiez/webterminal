@@ -12,6 +12,14 @@
   let currentSession = null;    // label de la sesión tmux activa (null = principal)
   let fsid = null;              // id de sesión para el explorador de archivos (SFTP)
 
+  // Equipación B: cuando estás en un server remoto (ssh dentro de la terminal) el
+  // fondo cambia para que se note. homeHost = primer host visto al conectar (el
+  // local); awayManual fuerza el modo a mano (null = automático por título).
+  let awayMode = false;
+  let homeHost = null;
+  let remoteHost = null;
+  let awayManual = null;        // null = auto · true/false = forzado por el usuario
+
   const $ = (id) => document.getElementById(id);
   const SCREENS = ["login-screen", "forgot-screen", "reset-screen", "ssh-screen", "account-screen", "terminal-screen"];
   function show(id) {
@@ -50,6 +58,7 @@
     const res = await fetch("/login", { method: "POST", body });
     if (!res.ok) return { ok: false, status: res.status };
     jwt = (await res.json()).token;
+    await loadTheme();   // aplica el look&feel guardado en la cuenta
     return { ok: true };
   }
 
@@ -164,6 +173,7 @@
   function logout() {
     jwt = sshUser = sshPassword = null;
     clearCreds();  // "Salir" = olvidar este equipo
+    resetAway();   // otra cuenta empieza sin "equipación B" heredada
     if (ws) { try { ws.close(); } catch (_) {} ws = null; }
     $("login-password").value = ""; $("ssh-password").value = "";
     $("login-remember").checked = false; $("ssh-remember").checked = false;
@@ -511,7 +521,196 @@
     } catch (_) { /* sin WebGL: DOM por defecto */ }
   }
 
-  // Colores de resaltado de la búsqueda (no activo / activo), en la paleta.
+  // =========================== TEMAS (look & feel) ===========================
+  // Un tema = tokens del "chrome" (variables CSS de :root) + paleta de la terminal
+  // xterm + un fondo de "equipación B" (bgAway) para cuando estás en un server
+  // remoto. Cambiar de tema reescribe las variables CSS y repinta ambas terminales.
+  // Los ids deben coincidir con VALID_THEMES en backend/main.py.
+  const DEFAULT_THEME = "messor-night";
+  const THEMES = {
+    "messor-night": {
+      name: "Messor Night", chrome: {
+        bg:"#16162e", panel:"#21213f", panel2:"#1b1b36", border:"#31315a",
+        accent:"#58c4ff", accentRgb:"88, 196, 255", accentInk:"#081320",
+        text:"#d4d4ee", muted:"#8b8bb4", green:"#50fa7b", red:"#ff5d5d", yellow:"#f1fa8c" },
+      term: { background:"#16162e", foreground:"#f8f8f2", cursor:"#f8f8f2", selectionBackground:"#31315a",
+        black:"#21222c", red:"#ff5555", green:"#50fa7b", yellow:"#f1fa8c", blue:"#6272a4",
+        magenta:"#ff79c6", cyan:"#58c4ff", white:"#f8f8f2" },
+      bgAway:"#2a1622", swatch:["#16162e","#58c4ff"],
+    },
+    "dracula": {
+      name: "Dracula", chrome: {
+        bg:"#282a36", panel:"#343746", panel2:"#21222c", border:"#44475a",
+        accent:"#bd93f9", accentRgb:"189, 147, 249", accentInk:"#1a1626",
+        text:"#f8f8f2", muted:"#9aa0c0", green:"#50fa7b", red:"#ff5555", yellow:"#f1fa8c" },
+      term: { background:"#282a36", foreground:"#f8f8f2", cursor:"#f8f8f2", selectionBackground:"#44475a",
+        black:"#21222c", red:"#ff5555", green:"#50fa7b", yellow:"#f1fa8c", blue:"#bd93f9",
+        magenta:"#ff79c6", cyan:"#8be9fd", white:"#f8f8f2" },
+      bgAway:"#3a2233", swatch:["#282a36","#bd93f9"],
+    },
+    "nord": {
+      name: "Nord", chrome: {
+        bg:"#2e3440", panel:"#3b4252", panel2:"#272c36", border:"#434c5e",
+        accent:"#88c0d0", accentRgb:"136, 192, 208", accentInk:"#10161c",
+        text:"#eceff4", muted:"#9099a8", green:"#a3be8c", red:"#bf616a", yellow:"#ebcb8b" },
+      term: { background:"#2e3440", foreground:"#d8dee9", cursor:"#d8dee9", selectionBackground:"#434c5e",
+        black:"#3b4252", red:"#bf616a", green:"#a3be8c", yellow:"#ebcb8b", blue:"#81a1c1",
+        magenta:"#b48ead", cyan:"#88c0d0", white:"#e5e9f0" },
+      bgAway:"#3b2e34", swatch:["#2e3440","#88c0d0"],
+    },
+    "gruvbox": {
+      name: "Gruvbox", chrome: {
+        bg:"#282828", panel:"#3c3836", panel2:"#1d2021", border:"#504945",
+        accent:"#fabd2f", accentRgb:"250, 189, 47", accentInk:"#231a00",
+        text:"#ebdbb2", muted:"#a89984", green:"#b8bb26", red:"#fb4934", yellow:"#fabd2f" },
+      term: { background:"#282828", foreground:"#ebdbb2", cursor:"#ebdbb2", selectionBackground:"#504945",
+        black:"#3c3836", red:"#fb4934", green:"#b8bb26", yellow:"#fabd2f", blue:"#83a598",
+        magenta:"#d3869b", cyan:"#8ec07c", white:"#ebdbb2" },
+      bgAway:"#33263a", swatch:["#282828","#fabd2f"],
+    },
+    "solarized-dark": {
+      name: "Solarized", chrome: {
+        bg:"#002b36", panel:"#073642", panel2:"#00212b", border:"#0a4b58",
+        accent:"#268bd2", accentRgb:"38, 139, 210", accentInk:"#00161d",
+        text:"#93a1a1", muted:"#586e75", green:"#859900", red:"#dc322f", yellow:"#b58900" },
+      term: { background:"#002b36", foreground:"#93a1a1", cursor:"#93a1a1", selectionBackground:"#073642",
+        black:"#073642", red:"#dc322f", green:"#859900", yellow:"#b58900", blue:"#268bd2",
+        magenta:"#d33682", cyan:"#2aa198", white:"#eee8d5" },
+      bgAway:"#2b2200", swatch:["#002b36","#268bd2"],
+    },
+    "paper": {
+      name: "Paper (día)", light: true, chrome: {
+        bg:"#f5f3ec", panel:"#ffffff", panel2:"#eceadf", border:"#d9d5c8",
+        accent:"#2b6cb0", accentRgb:"43, 108, 176", accentInk:"#ffffff",
+        text:"#2d2a24", muted:"#7a756a", green:"#2f855a", red:"#c53030", yellow:"#b7791f" },
+      term: { background:"#f5f3ec", foreground:"#2d2a24", cursor:"#2d2a24", selectionBackground:"#d9d5c8",
+        black:"#3b3a36", red:"#c53030", green:"#2f855a", yellow:"#b7791f", blue:"#2b6cb0",
+        magenta:"#97266d", cyan:"#2c7a7b", white:"#5b5750" },
+      bgAway:"#f3e1d6", swatch:["#f5f3ec","#2b6cb0"],
+    },
+  };
+
+  let activeThemeId = DEFAULT_THEME;
+  function activeTheme() { return THEMES[activeThemeId] || THEMES[DEFAULT_THEME]; }
+
+  // Paleta xterm del tema activo (con la equipación B aplicada si procede).
+  function xtermTheme() {
+    const th = activeTheme();
+    const t = { ...th.term };
+    if (awayMode) t.background = th.bgAway;   // fondo distinto en server remoto
+    return t;
+  }
+
+  // Aplica el tema: variables CSS de :root + paleta de ambas terminales + meta
+  // theme-color. persist=true lo guarda en la cuenta (backend).
+  function applyTheme(id, opts) {
+    if (!THEMES[id]) id = DEFAULT_THEME;
+    activeThemeId = id;
+    const th = THEMES[id], c = th.chrome, root = document.documentElement;
+    const bg = awayMode ? th.bgAway : c.bg;
+    root.style.setProperty("--bg", bg);
+    root.style.setProperty("--panel", c.panel);
+    root.style.setProperty("--panel-2", c.panel2);
+    root.style.setProperty("--border", c.border);
+    root.style.setProperty("--accent", c.accent);
+    root.style.setProperty("--accent-rgb", c.accentRgb);
+    root.style.setProperty("--accent-ink", c.accentInk);
+    root.style.setProperty("--text", c.text);
+    root.style.setProperty("--muted", c.muted);
+    root.style.setProperty("--green", c.green);
+    root.style.setProperty("--red", c.red);
+    root.style.setProperty("--yellow", c.yellow);
+    root.classList.toggle("theme-light", !!th.light);
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute("content", bg);
+    _FIND_DECOR.decorations.matchBackground = c.border;
+    _FIND_DECOR.decorations.matchOverviewRuler = c.accent;
+    _FIND_DECOR.decorations.activeMatchBackground = c.accent;
+    _FIND_DECOR.decorations.activeMatchColorOverviewRuler = c.accent;
+    if (term) term.options.theme = xtermTheme();
+    T2.setTheme(xtermTheme());
+    updateThemePicker();
+    if (opts && opts.persist) saveTheme(id);
+  }
+
+  // Carga el tema guardado de la cuenta (tras el login). Si no hay, deja el default.
+  async function loadTheme() {
+    try {
+      const res = await fetch("/preferences", { headers: { Authorization: "Bearer " + jwt } });
+      if (res.ok) { const d = await res.json(); if (d.theme && THEMES[d.theme]) { applyTheme(d.theme); return; } }
+    } catch (_) {}
+    applyTheme(activeThemeId);
+  }
+
+  async function saveTheme(id) {
+    try {
+      const body = new FormData(); body.append("theme", id);
+      await fetch("/preferences", { method: "POST", headers: { Authorization: "Bearer " + jwt }, body });
+    } catch (_) {}
+  }
+
+  // ---------- Equipación B: fondo distinto al estar en un server remoto ----------
+  // El título de la terminal (OSC) suele traer "user@host". El primer host que
+  // vemos al conectar es la máquina local (homeHost); si luego cambia (hiciste
+  // `ssh` a otra), activamos el modo remoto. Es heurística (depende de que el
+  // prompt remoto reporte título); el botón/atajo manual es la red de seguridad.
+  function parseHost(title) {
+    if (!title) return null;
+    const m = title.match(/@([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)/);
+    return m ? m[1] : null;   // sin "@" (apps TUI: vim, claude…): no tocamos nada
+  }
+  function handleTitle(title) {
+    const host = parseHost(title);
+    if (!host) return;
+    if (homeHost === null) homeHost = host;   // primer host visto = la máquina local
+    remoteHost = host;
+    if (awayManual === null) setAway(host !== homeHost, host);
+    else updateAwayBadge();
+  }
+  function setAway(on, host) {
+    if (host) remoteHost = host;
+    if (awayMode !== on) { awayMode = on; applyTheme(activeThemeId); }
+    updateAwayBadge();
+  }
+  function toggleAway() { awayManual = !awayMode; setAway(awayManual, remoteHost); }
+  function resetAway() { awayManual = null; homeHost = null; remoteHost = null; setAway(false, null); }
+  function updateAwayBadge() {
+    const b = $("away-badge");
+    if (b) {
+      b.style.display = awayMode ? "" : "none";
+      b.textContent = "⬤ REMOTO" + (awayMode && remoteHost ? " · " + remoteHost : "");
+    }
+    const btn = $("away-btn");
+    if (btn) { btn.classList.toggle("on", awayMode); btn.setAttribute("aria-pressed", awayMode ? "true" : "false"); }
+  }
+
+  // ---------- Selector de tema (popover de swatches en la barra superior) ----------
+  function buildThemePicker() {
+    const pop = $("theme-pop");
+    if (!pop || pop.dataset.built) return;
+    pop.dataset.built = "1";
+    Object.keys(THEMES).forEach((id) => {
+      const th = THEMES[id];
+      const item = document.createElement("button");
+      item.type = "button"; item.className = "theme-item"; item.dataset.id = id;
+      item.innerHTML =
+        '<span class="sw" style="background:' + th.swatch[0] + '">' +
+        '<i style="background:' + th.swatch[1] + '"></i></span>' +
+        '<span class="nm">' + th.name + '</span>';
+      item.addEventListener("click", () => { applyTheme(id, { persist: true }); closeThemePop(); });
+      pop.appendChild(item);
+    });
+  }
+  function updateThemePicker() {
+    const pop = $("theme-pop");
+    if (!pop) return;
+    pop.querySelectorAll(".theme-item").forEach((el) => el.classList.toggle("active", el.dataset.id === activeThemeId));
+  }
+  function openThemePop() { buildThemePicker(); updateThemePicker(); const p = $("theme-pop"); if (p) p.classList.add("open"); }
+  function closeThemePop() { const p = $("theme-pop"); if (p) p.classList.remove("open"); }
+  function toggleThemePop() { const p = $("theme-pop"); if (p && p.classList.contains("open")) closeThemePop(); else openThemePop(); }
+
+  // Colores de resaltado de la búsqueda (no activo / activo). Los reescribe applyTheme.
   const _FIND_DECOR = {
     decorations: {
       matchBackground: "#3a5a7a", matchOverviewRuler: "#58c4ff",
@@ -522,9 +721,7 @@
   function initTerminal() {
     if (term) return;
     term = new Terminal({
-      theme: { background:"#16162e", foreground:"#f8f8f2", cursor:"#f8f8f2", selectionBackground:"#31315a",
-        black:"#21222c", red:"#ff5555", green:"#50fa7b", yellow:"#f1fa8c", blue:"#6272a4",
-        magenta:"#ff79c6", cyan:"#58c4ff", white:"#f8f8f2" },
+      theme: xtermTheme(),
       fontFamily: "'JetBrains Mono', monospace", fontSize: 14, lineHeight: 1.0,
       scrollSensitivity: 3,
       cursorBlink: true, cursorStyle: "block", scrollback: 10000, allowProposedApi: true,
@@ -535,6 +732,7 @@
     term.loadAddon(new WebLinksAddon.WebLinksAddon());
     term.loadAddon(searchAddon);
     term.open($("terminal-container"));
+    term.onTitleChange(handleTitle);   // equipación B: detecta el host por el título
     tryWebgl(term);   // renderer GPU si el dispositivo lo soporta (si no, DOM)
     // Renderer: WebGL si hay soporte; si falla, el DOM por defecto. El scroll lo
     // gestiona tmux vía eventos SGR que genera el core de xterm, no el renderer,
@@ -600,11 +798,30 @@
       }
       // Buscar: Ctrl+Shift+F abre la barra de búsqueda flotante.
       if (ev.ctrlKey && ev.shiftKey && ev.code === "KeyF") { termFindOpen(); return false; }
+      // Equipación B: Ctrl+Shift+B. Se captura aquí (return false) para que NO
+      // llegue al PTY (Ctrl+B es el prefijo de tmux).
+      if (ev.ctrlKey && ev.shiftKey && ev.code === "KeyB") { toggleAway(); return false; }
       return true;
     });
     setupTermFind();
     $("font-dec").addEventListener("click", () => changeFont(-1));
     $("font-inc").addEventListener("click", () => changeFont(1));
+    const findBtn = $("find-btn");
+    if (findBtn) findBtn.addEventListener("click", termFindOpen);
+
+    // --- Tema (look&feel) y equipación B (modo remoto) ---
+    const themeBtn = $("theme-btn");
+    if (themeBtn) themeBtn.addEventListener("click", (e) => { e.stopPropagation(); toggleThemePop(); });
+    const awayBtn = $("away-btn");
+    if (awayBtn) awayBtn.addEventListener("click", toggleAway);
+    // Cerrar el popover de temas al hacer clic fuera o con Escape.
+    document.addEventListener("click", (e) => {
+      const pop = $("theme-pop");
+      if (pop && pop.classList.contains("open") && !pop.contains(e.target) && e.target !== themeBtn && !themeBtn.contains(e.target)) closeThemePop();
+    });
+    // Cierra el popover con Escape. (El atajo Ctrl+Mayús+B lo captura xterm,
+    // para que Ctrl+B no llegue al prefijo de tmux.)
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeThemePop(); });
 
     // --- Pegar imagen (Ctrl+V con imagen en el portapapeles) ---
     // A nivel de DOCUMENTO en fase de captura: así interceptamos el pegado antes
@@ -804,11 +1021,21 @@
     if (c >= 97 && c <= 122) return String.fromCharCode(c - 96);
     return ch;
   }
+  // "Ir abajo del todo": bajo tmux, si el panel está en copy-mode (has scrolleado
+  // hacia arriba) lo cancelamos, que devuelve la vista al prompt vivo del fondo.
+  // La guardia #{pane_in_mode} lo hace inofensivo si NO estás en copy-mode o si hay
+  // una app (Claude/vim) ocupando la pantalla. El scrollToBottom cubre el buffer
+  // normal de xterm (sin tmux).
+  function scrollTermBottom() {
+    sendRaw("\x02:if -F '#{pane_in_mode}' 'send-keys -X cancel'\r");
+    if (term) { try { term.scrollToBottom(); } catch (_) {} term.focus(); }
+  }
   function setupKeybar() {
     const bar = $("keybar"); if (!bar) return;
     bar.addEventListener("click", (e) => {
       const btn = e.target.closest("button.kb"); if (!btn) return;
       if (btn.id === "kb-ctrl") { setCtrl(!ctrlPending); return; }
+      if (btn.id === "kb-bottom") { scrollTermBottom(); return; }
       let seq = btn.getAttribute("data-seq") || "";
       if (ctrlPending && seq.length === 1) { seq = toCtrl(seq); setCtrl(false); }
       sendRaw(seq);
@@ -1400,9 +1627,7 @@
     function ensure() {
       if (t) return;
       t = new Terminal({
-        theme: { background: "#16162e", foreground: "#f8f8f2", cursor: "#f8f8f2", selectionBackground: "#31315a",
-          black: "#21222c", red: "#ff5555", green: "#50fa7b", yellow: "#f1fa8c", blue: "#6272a4",
-          magenta: "#ff79c6", cyan: "#58c4ff", white: "#f8f8f2" },
+        theme: xtermTheme(),
         fontFamily: "'JetBrains Mono', monospace", fontSize: 14, lineHeight: 1.0,
         scrollSensitivity: 3, cursorBlink: true, cursorStyle: "block", scrollback: 10000, allowProposedApi: true,
       });
@@ -1454,6 +1679,8 @@
       sessionLabel() { return sess === null ? "principal" : sess; },
       fit: fitNow,
       focus() { if (t) t.focus(); },
+      // Repinta la 2ª terminal con la paleta del tema activo (si está creada).
+      setTheme(themeObj) { if (t) t.options.theme = themeObj; },
       // Manda datos al PTY de la 2ª terminal; si aún no está abierta, los encola.
       send(data) { if (ws2 && ws2.readyState === WebSocket.OPEN) ws2.send(data); else pending += data; },
       close() { closed = true; clearTimeout(rTimer); pending = ""; if (ws2) { try { ws2.onclose = null; ws2.close(); } catch (_) {} ws2 = null; } sess = null; },
