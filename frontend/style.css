@@ -12,6 +12,7 @@
   --green: #50fa7b;
   --red: #ff5d5d;
   --yellow: #f1fa8c;
+  --bg-away: #2a1622;   /* tinte de "equipación B" (server remoto); lo pisa el tema */
   /* Altura compartida de las cabeceras de la fila superior (Archivos + pestañas),
      para que sus bordes inferiores queden alineados. */
   --bar-h: 36px;
@@ -133,15 +134,21 @@ html, body {
 #topbar button:hover { border-color: var(--accent); color: var(--accent); background: rgba(var(--accent-rgb), .08); }
 #topbar button.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 
-/* Equipación B: badge "REMOTO" (automático) en la barra izquierda. */
+/* Indicador de sesión (clicable para renombrar): LOCAL con el acento (como la
+   pestaña local activa) · REMOTO ámbar (como la pestaña remota). */
 .away-badge {
   font-family: var(--font-mono); font-size: 10.5px; font-weight: 700; letter-spacing: .04em;
-  color: var(--yellow); border: 1px solid color-mix(in srgb, var(--yellow), transparent 55%);
-  background: color-mix(in srgb, var(--yellow), transparent 86%);
+  color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent), transparent 55%);
+  background: rgba(var(--accent-rgb), .12);
   padding: 2px 8px; border-radius: 999px; white-space: nowrap;
-  cursor: pointer; transition: background .12s, border-color .12s;
+  cursor: pointer; transition: background .12s, border-color .12s, color .12s;
 }
-.away-badge:hover { background: color-mix(in srgb, var(--yellow), transparent 75%); border-color: var(--yellow); }
+.away-badge:hover { background: rgba(var(--accent-rgb), .2); border-color: var(--accent); }
+.away-badge.remote {
+  color: var(--yellow); border-color: color-mix(in srgb, var(--yellow), transparent 55%);
+  background: color-mix(in srgb, var(--yellow), transparent 86%);
+}
+.away-badge.remote:hover { background: color-mix(in srgb, var(--yellow), transparent 75%); border-color: var(--yellow); }
 
 /* Selector de tema: botón con popover de swatches. */
 .theme-wrap { position: relative; display: inline-flex; }
@@ -496,6 +503,13 @@ body.files-open .files-side { display: flex; }
    pleno con borde de acento. */
 .tab.tab-active { background: rgba(var(--accent-rgb),.16); color: var(--accent); border-color: var(--accent); }
 .tab.tab-shown { background: rgba(var(--accent-rgb),.07); color: var(--text); border-color: rgba(var(--accent-rgb),.40); }
+/* Pestaña de sesión REMOTA: fondo con el tinte de equipación B + acento ámbar
+   (a juego con el badge REMOTO). El estado activo/visible refuerza el borde. */
+.tab.remote { background: var(--bg-away); color: var(--text); border-color: color-mix(in srgb, var(--yellow), transparent 55%); }
+.tab.remote:hover { border-color: var(--yellow); color: var(--text); }
+.tab.remote .tab-ico { color: var(--yellow); }
+.tab.remote.tab-active { color: var(--yellow); border-color: var(--yellow); background: color-mix(in srgb, var(--bg-away), var(--yellow) 14%); }
+.tab.remote.tab-shown { border-color: color-mix(in srgb, var(--yellow), transparent 40%); }
 .tab .tab-ico { flex: 0 0 auto; font-size: 13px; line-height: 1; }
 .tab .tab-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .tab .tab-close {

@@ -19,7 +19,7 @@
   let awayMode = false;
   let remoteHost = null;
   let _focusedTerm = "main";
-  let hostAliases = {};   // {hostname: "nombre humano"} guardado en la cuenta
+  let aliases = {};   // {etiqueta de sesión tmux: "nombre humano"} guardado en la cuenta
 
   const $ = (id) => document.getElementById(id);
   const SCREENS = ["login-screen", "forgot-screen", "reset-screen", "ssh-screen", "account-screen", "terminal-screen"];
@@ -624,6 +624,7 @@
     root.style.setProperty("--green", c.green);
     root.style.setProperty("--red", c.red);
     root.style.setProperty("--yellow", c.yellow);
+    root.style.setProperty("--bg-away", th.bgAway);   // tinte remoto (pestañas)
     root.classList.toggle("theme-light", !!th.light);
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.setAttribute("content", c.bg);
@@ -644,7 +645,7 @@
       const res = await fetch("/preferences", { headers: { Authorization: "Bearer " + jwt } });
       if (res.ok) {
         const d = await res.json();
-        if (d.aliases && typeof d.aliases === "object") hostAliases = d.aliases;
+        if (d.aliases && typeof d.aliases === "object") aliases = d.aliases;
         if (d.theme && THEMES[d.theme]) theme = d.theme;
       }
     } catch (_) {}
@@ -670,43 +671,54 @@
     updateAwayBadge();
   }
   function resetAway() { awayMode = false; remoteHost = null; if (term) term.options.theme = termPalette(false); updateAwayBadge(); }
-  // Estado remoto de la terminal con el foco (main o la 2ª del split).
+  // Estado de la terminal con el foco (main o la 2ª del split): si es remota, su host,
+  // y la etiqueta de su sesión tmux (la CLAVE del alias — siempre existe).
   function focusedRemote() {
-    if (_focusedTerm === "sec") return { on: T2.isAway(), host: T2.remoteHost() };
-    return { on: awayMode, host: remoteHost };
+    if (_focusedTerm === "sec") return { on: T2.isAway(), host: T2.remoteHost(), label: T2.sessionLabel() };
+    return { on: awayMode, host: remoteHost, label: currentSession || "principal" };
   }
-  // Nombre a mostrar para un host: su alias humano si existe, si no el hostname.
-  function displayHost(host) { return host ? (hostAliases[host] || host) : null; }
-
+  // Nombre a mostrar para una sesión: su alias humano si lo has puesto; si no, el
+  // hostname detectado (solo en remoto). Null = sin nombre extra.
+  function sessionName(label, on, host) {
+    if (label && aliases[label]) return aliases[label];
+    return on ? (host || null) : null;
+  }
+  // El badge SIEMPRE visible con terminal conectada: "LOCAL" o "⬤ REMOTO", con el
+  // nombre detrás si lo hay (p. ej. "⬤ REMOTO · pepe"). Clicable para renombrar.
   function updateAwayBadge() {
     const r = focusedRemote();
     const b = $("away-badge");
-    if (b) {
-      b.style.display = r.on ? "" : "none";
-      const shown = displayHost(r.host);
-      b.textContent = "⬤ REMOTO" + (shown ? " · " + shown : "");
-      b.title = r.on && r.host ? "Pulsa para renombrar “" + r.host + "”" : "";
-    }
+    if (!b) return;
+    b.style.display = "";
+    b.classList.toggle("remote", !!r.on);
+    const nm = sessionName(r.label, r.on, r.host);
+    b.textContent = (r.on ? "⬤ REMOTO" : "LOCAL") + (nm ? " · " + nm : "");
+    b.title = "Pulsa para ponerle un nombre a esta sesión" + (r.on && r.host ? " (" + r.host + ")" : "");
   }
 
-  // Renombrar el host remoto actual (clic en el badge). Guarda el alias en la cuenta.
-  async function renameRemote() {
+  // Renombrar la sesión enfocada (clic en el badge). El alias va por ETIQUETA DE
+  // SESIÓN tmux, así vale igual para local y remoto y no se pierde aunque una app
+  // (Claude/vim) cambie el título del panel.
+  async function renameSession() {
     const r = focusedRemote();
-    if (!r.on || !r.host) return;
+    const label = r.label;
+    if (!label) return;
+    const ctx = r.on ? ("remoto" + (r.host ? " · " + r.host : "")) : "local";
     const name = await uiPrompt({
-      icon: "pencil", title: "Nombre del servidor remoto",
-      message: "Alias para “" + r.host + "”. Se mostrará en el indicador REMOTO. Vacío = quitar alias.",
-      placeholder: "p. ej. Producción, Vistawib…", value: hostAliases[r.host] || "", ok: "Guardar",
+      icon: "pencil", title: "Nombre de esta sesión",
+      message: "Nombre que verás en el indicador (" + ctx + "). Déjalo vacío para quitarlo.",
+      placeholder: "p. ej. Producción, Local dev…", value: aliases[label] || "", ok: "Guardar",
     });
     if (name === null) return;
     const clean = name.trim();
-    if (clean) hostAliases[r.host] = clean; else delete hostAliases[r.host];
+    if (clean) aliases[label] = clean; else delete aliases[label];
     updateAwayBadge();
-    saveAlias(r.host, clean);
+    _updateTabsUI();   // refresca también el nombre en la pestaña
+    saveAlias(label, clean);
   }
-  async function saveAlias(host, name) {
+  async function saveAlias(key, name) {
     try {
-      const body = new FormData(); body.append("host", host); body.append("name", name);
+      const body = new FormData(); body.append("host", key); body.append("name", name);
       await fetch("/preferences/alias", { method: "POST", headers: { Authorization: "Bearer " + jwt }, body });
     } catch (_) {}
   }
@@ -845,7 +857,7 @@
     if (term && term.textarea) term.textarea.addEventListener("focus", () => { _focusedTerm = "main"; updateAwayBadge(); });
     // Clic en el badge REMOTO -> renombrar el servidor con un alias humano.
     const awayBadge = $("away-badge");
-    if (awayBadge) awayBadge.addEventListener("click", renameRemote);
+    if (awayBadge) awayBadge.addEventListener("click", renameSession);
 
     // --- Pegar imagen (Ctrl+V con imagen en el portapapeles) ---
     // A nivel de DOCUMENTO en fase de captura: así interceptamos el pegado antes
@@ -2041,11 +2053,12 @@
       : [{ label: currentSession || "principal", current: true }];
     sessions.forEach((s) => {
       const el = document.createElement("div");
-      el.className = "tab" + sessCls(s);
+      el.className = "tab" + sessCls(s) + (s.remote ? " remote" : "");
       el.dataset.tab = "term:" + s.label;
-      el.title = "Sesión tmux: " + s.label + (s.current ? " (actual)" : "");
+      el.title = "Sesión tmux: " + s.label + (s.current ? " (actual)" : "")
+        + (s.remote ? " · REMOTO" + (s.host ? ": " + s.host : "") : " · LOCAL");
       el.innerHTML = '<span class="tab-ico">' + icon("terminal") + '</span><span class="tab-name"></span>';
-      el.querySelector(".tab-name").textContent = s.label;
+      el.querySelector(".tab-name").textContent = aliases[s.label] || s.label;
       if (!s.current) {   // solo se puede cerrar una sesión que no sea la actual
         const x = document.createElement("button");
         x.className = "tab-close"; x.innerHTML = icon("x"); x.title = "Cerrar esta sesión";

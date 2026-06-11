@@ -44,6 +44,20 @@ REMOTE_CMDS = {"ssh", "mosh", "mosh-client", "sshpass", "autossh", "et", "telnet
 REMOTE_POLL_SECS = 1.5
 
 
+def _host_from_title(title: str):
+    """Saca el hostname del título de un panel: 'user@host: ~' -> host, o el propio
+    título si ya es un hostname pelado (p. ej. 'vps-17a4c3ba'). None si no encaja."""
+    title = (title or "").strip()
+    if not title:
+        return None
+    m = re.search(r"@([A-Za-z0-9][A-Za-z0-9._-]*)", title)
+    if m:
+        return m.group(1)
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{1,63}", title):
+        return title
+    return None
+
+
 def _slug(s: str | None) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "_", (s or "").lower()).strip("_")
 
@@ -144,48 +158,34 @@ class SSHTerminal:
         await asyncio.gather(*pending, return_exceptions=True)
         self.close()
 
-    # ---- "Equipación B": vigila si el panel activo está en un server remoto ----
-    def _remote_probe(self) -> tuple:
-        """(on, host): ¿el panel activo de la sesión corre ssh/mosh/…? Pregunta a
-        tmux por el comando en primer plano y el título del panel (que, al hacer
-        ssh, suele pasar a 'user@host')."""
-        # Dos consultas LIMPIAS (sin separadores raros que se rompen por el camino):
-        # primero el comando en primer plano; si es remoto, luego el título.
-        try:
-            cmd = self._tmux("display-message", "-p", "-t", self.session,
-                             "#{pane_current_command}").strip().splitlines()
-        except Exception:
-            return (False, None)
-        cmd = cmd[0].strip().lower() if cmd else ""
-        on = cmd in REMOTE_CMDS
-        if not on:
-            return (False, None)
-        host = None
-        try:
-            title = self._tmux("display-message", "-p", "-t", self.session, "#{pane_title}").strip()
-        except Exception:
-            title = ""
-        if title:
-            title = title.splitlines()[0].strip()
-            m = re.search(r"@([A-Za-z0-9][A-Za-z0-9._-]*)", title)   # "user@host: ~"
-            if m:
-                host = m.group(1)
-            elif re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{1,63}", title):  # título = host pelado
-                host = title
-        return (on, host)
-
+    # ---- "Equipación B": vigila qué sesiones están en un server remoto ----
     async def _remote_watch(self) -> None:
-        """Sondea periódicamente y avisa al cliente SOLO cuando cambia el estado.
-        Envía el primer estado de inmediato (al conectar) para no dejar tinte viejo."""
-        last = None
+        """Sondea tmux cada ~1,5 s y avisa al cliente cuando algo cambia, con UNA
+        sola consulta a tmux por tick (list-sessions trae el comando de cada panel):
+        - {type:"remote"}        -> estado de la sesión ACTIVA (tinte del terminal).
+        - {type:"tmux-sessions"} -> lista con flag remote por sesión (tinte de pestañas).
+        El primer envío es inmediato (al conectar) para no dejar estado viejo."""
+        last_active = None
+        last_sig = None
         try:
             while not self._closed:
-                state = await asyncio.to_thread(self._remote_probe)
-                if state != last:
-                    last = state
+                sessions = await asyncio.to_thread(self._list_sessions)
+                active = next((s for s in sessions if s.get("current")), None)
+                astate = (bool(active and active.get("remote")),
+                          active.get("host") if active else None)
+                if astate != last_active:
+                    last_active = astate
                     try:
                         await self.websocket.send_text(json.dumps(
-                            {"type": "remote", "on": state[0], "host": state[1]}))
+                            {"type": "remote", "on": astate[0], "host": astate[1]}))
+                    except Exception:
+                        break
+                sig = [(s["label"], s["current"], s["remote"], s["host"]) for s in sessions]
+                if sig != last_sig:
+                    last_sig = sig
+                    try:
+                        await self.websocket.send_text(json.dumps(
+                            {"type": "tmux-sessions", "sessions": sessions}))
                     except Exception:
                         break
                 await asyncio.sleep(REMOTE_POLL_SECS)
@@ -264,23 +264,36 @@ class SSHTerminal:
         return out.read().decode("utf-8", "replace")
 
     def _list_sessions(self) -> list:
-        """Lista SOLO las sesiones de este usuario (por prefijo de email)."""
+        """Lista SOLO las sesiones de este usuario (por prefijo), cada una con su
+        estado remoto (¿el panel activo corre ssh/mosh/…?) en UNA sola consulta a
+        tmux. El separador '|' es seguro: los nombres van slugados y el comando no
+        lo contiene; el título (que sí podría) va el último y no se re-parte."""
         try:
-            raw = self._tmux("list-sessions", "-F", "#{session_name}")
+            raw = self._tmux("list-sessions", "-F",
+                             "#{session_name}|#{pane_current_command}|#{pane_title}")
         except Exception:
             return []
         out = []
         for line in raw.splitlines():
-            name = line.strip()
-            if not name:
+            if not line.strip():
                 continue
+            parts = line.split("|", 2)
+            name = parts[0].strip()
+            cmd = parts[1].strip().lower() if len(parts) > 1 else ""
+            title = parts[2] if len(parts) > 2 else ""
             if name == self.prefix:
                 label = DEFAULT_LABEL
             elif name.startswith(self.prefix + "-"):
                 label = name[len(self.prefix) + 1:]
             else:
                 continue  # sesión de OTRO usuario: no se lista ni se toca
-            out.append({"label": label, "current": name == self.session})
+            remote = cmd in REMOTE_CMDS
+            out.append({
+                "label": label,
+                "current": name == self.session,
+                "remote": remote,
+                "host": _host_from_title(title) if remote else None,
+            })
         return out
 
     def _kill_session(self, label) -> None:
