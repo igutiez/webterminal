@@ -30,7 +30,7 @@
   <script src="https://unpkg.com/xterm-addon-webgl@0.16.0/lib/xterm-addon-webgl.js"></script>
 
   <link rel="stylesheet" href="hljs-dracula.css?v=1" />
-  <link rel="stylesheet" href="style.css?v=67" />
+  <link rel="stylesheet" href="style.css?v=68" />
 </head>
 <body>
   <!-- Sprite de iconos SVG (local, mismo aspecto en Safari/Chrome/iOS/Android). Lucide, ISC. -->
@@ -221,8 +221,14 @@
             <button id="term-find-next" class="vbtn" title="Siguiente (Intro)"><svg class="ic"><use href="#ic-arrow-down"/></svg></button>
             <button id="term-find-x" class="vbtn" title="Cerrar (Esc)"><svg class="ic"><use href="#ic-x"/></svg></button>
           </div>
-          <div id="terminal-container"></div>
-          <div id="terminal-container-2" class="term2" hidden></div>
+          <div id="terminal-container">
+            <div class="pane-head" id="pane-head-main" hidden></div>
+            <div id="term-host-main" class="term-host"></div>
+          </div>
+          <div id="terminal-container-2" class="term2" hidden>
+            <div class="pane-head" id="pane-head-sec" hidden></div>
+            <div id="term-host-sec" class="term-host"></div>
+          </div>
           <div id="panes-divider" class="panes-divider" title="Arrastra para redimensionar · doble clic para 50/50" hidden></div>
           <div id="viewer" class="viewer" hidden>
             <div class="viewer-head">
@@ -410,6 +416,6 @@
   </div>
 
   <script src="highlight.min.js?v=1"></script>
-  <script src="app.js?v=71"></script>
+  <script src="app.js?v=72"></script>
 </body>
 </html>

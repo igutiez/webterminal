@@ -228,20 +228,35 @@ label.remember input { width: auto; margin: 0; accent-color: var(--accent); curs
 /* Hueco con el foco: borde de acento (ahí se carga la siguiente pestaña). */
 #panes.split > .pane-focus { outline: 2px solid var(--accent); outline-offset: -2px; }
 
-#terminal-container {
+/* Panel de terminal = columna: [cabecera del panel] + [host del xterm]. La
+   cabecera (oculta salvo en split) lleva el nombre de la sesión de ESE panel. */
+#terminal-container, #terminal-container-2 {
   flex: 1 1 auto; min-height: 0; min-width: 0; width: auto; position: relative;
-  overflow: hidden; padding: 6px 10px; background: var(--bg);
+  overflow: hidden; background: var(--bg); display: flex; flex-direction: column;
 }
-/* xterm posiciona sus capas en absoluto: forzamos que rellene el contenedor */
-#terminal-container .xterm { height: 100%; width: 100%; }
+.term-host { flex: 1 1 auto; min-height: 0; min-width: 0; position: relative; overflow: hidden; padding: 6px 10px; }
+/* xterm posiciona sus capas en absoluto: forzamos que rellene su host */
+.term-host .xterm { height: 100%; width: 100%; }
 #terminal-container.drag-over { outline: 2px dashed var(--accent); outline-offset: -6px; }
-/* Segunda terminal (hueco derecho en split). Mismo aspecto que la principal. */
-#terminal-container-2 {
-  flex: 1 1 auto; min-height: 0; min-width: 0; width: auto; position: relative;
-  overflow: hidden; padding: 6px 10px; background: var(--bg);
-}
 #terminal-container-2[hidden] { display: none !important; }
-#terminal-container-2 .xterm { height: 100%; width: 100%; }
+
+/* Mini-cabecera por panel: nombre de su sesión (clic = enfocar ese panel). */
+.pane-head {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 6px; height: 24px;
+  padding: 0 10px; background: var(--panel); border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono); font-size: 11px; font-weight: 700; color: var(--muted);
+  cursor: pointer; user-select: none; white-space: nowrap; overflow: hidden;
+}
+.pane-head[hidden] { display: none !important; }
+.pane-head:hover { color: var(--text); }
+.pane-head .ph-dot { font-size: 8px; line-height: 1; color: var(--accent); }
+.pane-head .ph-name { overflow: hidden; text-overflow: ellipsis; }
+/* Cabecera de un panel REMOTO: ámbar, a juego con el tinte y el badge. */
+.pane-head.remote { color: var(--yellow); background: color-mix(in srgb, var(--yellow), var(--panel) 82%); border-bottom-color: color-mix(in srgb, var(--yellow), transparent 55%); }
+.pane-head.remote .ph-dot { color: var(--yellow); }
+/* El panel enfocado resalta su cabecera con el acento. */
+#terminal-container.pane-focus .pane-head:not(.remote),
+#terminal-container-2.pane-focus .pane-head:not(.remote) { color: var(--accent); }
 #img-upload { width: 30px; }
 
 /* Toast de subida de imagen */

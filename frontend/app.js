@@ -754,6 +754,7 @@
     const nm = sessionName(r.label, r.on, r.host);
     b.textContent = (r.on ? "⬤ REMOTO" : "LOCAL") + (nm ? " · " + nm : "");
     b.title = "Pulsa para ponerle un nombre a esta sesión" + (r.on && r.host ? " (" + r.host + ")" : "");
+    if (typeof _updatePaneHeads === "function") _updatePaneHeads();
   }
 
   // Renombrar la sesión enfocada (clic en el badge). El alias va por ETIQUETA DE
@@ -830,7 +831,7 @@
     term.loadAddon(fitAddon);
     term.loadAddon(new WebLinksAddon.WebLinksAddon());
     term.loadAddon(searchAddon);
-    term.open($("terminal-container"));
+    term.open($("term-host-main"));
     tryWebgl(term);   // renderer GPU si el dispositivo lo soporta (si no, DOM)
     // Renderer: WebGL si hay soporte; si falla, el DOM por defecto. El scroll lo
     // gestiona tmux vía eventos SGR que genera el core de xterm, no el renderer,
@@ -1755,7 +1756,7 @@
       fit = new FitAddon.FitAddon();
       t.loadAddon(fit);
       t.loadAddon(new WebLinksAddon.WebLinksAddon());
-      t.open($("terminal-container-2"));
+      t.open($("term-host-sec"));
       tryWebgl(t);
       t.onData((d) => { if (ws2 && ws2.readyState === WebSocket.OPEN) ws2.send(d); });
       t.onSelectionChange(() => { const s = t.getSelection(); if (s) navigator.clipboard.writeText(s).catch(() => {}); });
@@ -1881,6 +1882,26 @@
     const focusEl = _splitActive() ? _slotEl(_slots[_focusPane]) : null;
     [$("terminal-container"), $("terminal-container-2"), $("viewer")].forEach((el) => { if (el) el.classList.toggle("pane-focus", el === focusEl); });
   }
+  // Mini-cabecera de cada panel de terminal: visible SOLO en split, con el nombre de
+  // su sesión y color según local/remoto. (El visor ya lleva su propia cabecera.)
+  function _setPaneHead(id, visible, label, on, host) {
+    const el = $(id);
+    if (!el) return;
+    el.hidden = !visible;
+    if (!visible) return;
+    el.classList.toggle("remote", !!on);
+    el.innerHTML = '<span class="ph-dot">●</span><span class="ph-name"></span>';
+    el.querySelector(".ph-name").textContent = (aliases[label] || label);
+    el.title = (on ? "REMOTO" : "LOCAL") + (on && host ? " · " + host : "") + " — clic para enfocar este panel";
+  }
+  function _updatePaneHeads() {
+    const split = _splitActive();
+    const kinds = [_slots.L.kind, _slots.R.kind];
+    _setPaneHead("pane-head-main", split && kinds.includes("main"),
+      currentSession || "principal", awayMode, remoteHost);
+    _setPaneHead("pane-head-sec", split && kinds.includes("sec"),
+      T2.sessionLabel(), T2.isAway(), T2.remoteHost());
+  }
   // Reconcilia el DOM (layout + visibilidad + motores) con el estado de los huecos.
   function _applyPanes() {
     const P = $("terminal-container"), S = $("terminal-container-2"), V = $("viewer"), div = $("panes-divider"), panes = $("panes");
@@ -1918,6 +1939,7 @@
       if (tf) panes.append(tf);
     }
     _applyFocusOutline();
+    _updatePaneHeads();
   }
   function _ensureTerminalVisible() { _applyPanes(); }
   function _ensureViewerVisible() { _applyPanes(); }
@@ -2067,6 +2089,8 @@
   function _setupSplitDrag() {
     const div = $("panes-divider"), panes = $("panes");
     if (!div || !panes) return;
+    // Recuerda el reparto del split entre sesiones (como el ancho del árbol).
+    try { const s = parseFloat(localStorage.getItem("wt_split")); if (s >= 20 && s <= 80) panes.style.setProperty("--split", s + "%"); } catch (_) {}
     let dragging = false;
     const onMove = (clientX) => {
       const r = panes.getBoundingClientRect();
@@ -2076,6 +2100,7 @@
       if (snap) pct = 50;
       div.classList.toggle("snapped", snap);
       panes.style.setProperty("--split", pct + "%");
+      try { localStorage.setItem("wt_split", String(Math.round(pct))); } catch (_) {}
       _refitPanes();
     };
     // Pointer Events + setPointerCapture: una vez agarras el divisor, TODOS los
@@ -2102,7 +2127,7 @@
     div.addEventListener("pointerup", end);
     div.addEventListener("pointercancel", end);
     // Doble clic en el divisor = volver al reparto igual (50/50).
-    div.addEventListener("dblclick", () => { panes.style.setProperty("--split", "50%"); _refitPanes(); });
+    div.addEventListener("dblclick", () => { panes.style.setProperty("--split", "50%"); try { localStorage.setItem("wt_split", "50"); } catch (_) {} _refitPanes(); });
     window.addEventListener("resize", () => { if (_split) { _applyPanes(); _refitPanes(); } });
   }
 
