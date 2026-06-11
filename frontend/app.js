@@ -1774,9 +1774,16 @@
       t.open($("term-host-sec"));
       tryWebgl(t);
       t.onData((d) => { if (ws2 && ws2.readyState === WebSocket.OPEN) ws2.send(d); });
-      t.onSelectionChange(() => { const s = t.getSelection(); if (s) navigator.clipboard.writeText(s).catch(() => {}); });
-      // Clic derecho en la 2ª terminal: copia o pega (mismo comportamiento que la principal).
+      // Copia vía backend (tmux copy-selection). Solo se dispara si hubo arrastre.
+      let _t2drag = false;
       if (t.element) {
+        t.element.addEventListener("mousedown", () => { _t2drag = false; });
+        t.element.addEventListener("mousemove", () => { _t2drag = true; });
+        t.element.addEventListener("mouseup", () => {
+          if (_t2drag && ws2 && ws2.readyState === WebSocket.OPEN) {
+            ws2.send(JSON.stringify({ type: "copy-tmux" }));
+          }
+        });
         t.element.addEventListener("contextmenu", (e) => {
           e.preventDefault(); e.stopPropagation();
           const sel = t.getSelection();
@@ -1784,6 +1791,7 @@
           else { navigator.clipboard.readText().then(txt => { if (txt && ws2 && ws2.readyState === WebSocket.OPEN) ws2.send(txt); }).catch(() => {}); }
         });
       }
+      t.onSelectionChange(() => {});
       // El badge "REMOTO" sigue al foco: al enfocar esta 2ª terminal, refléjala.
       if (t.textarea) t.textarea.addEventListener("focus", () => { _focusedTerm = "sec"; updateAwayBadge(); });
     }
@@ -1805,6 +1813,7 @@
           try {
             const m = JSON.parse(ev.data);
             if (m && m.type === "remote") { setRemote(!!m.on, m.host || null); return; }
+            if (m && m.type === "tmux-clipboard") { navigator.clipboard.writeText(m.text || "").catch(() => {}); return; }
             if (m && (m.type === "tmux-sessions" || m.type === "fsid")) return;
           } catch (_) {}
         }
@@ -3068,6 +3077,7 @@
             if (m && m.type === "tmux-sessions") { renderSessions(m.sessions || []); return; }
             if (m && m.type === "fsid") { fsid = m.fsid; requestSessions(); _restoreOpenTabs(); return; }
             if (m && m.type === "remote") { setMainAway(!!m.on, m.host || null); return; }
+            if (m && m.type === "tmux-clipboard") { navigator.clipboard.writeText(m.text || "").catch(() => {}); return; }
           } catch (_) {}
         }
         term.write(ev.data);

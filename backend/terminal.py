@@ -330,7 +330,29 @@ class SSHTerminal:
         if t == "scroll-bottom":
             await asyncio.to_thread(self._scroll_to_bottom)
             return True
+        if t == "copy-tmux":
+            text = await asyncio.to_thread(self._copy_tmux_selection_sync)
+            if text:
+                try:
+                    await self.websocket.send_text(json.dumps({"type": "tmux-clipboard", "text": text}))
+                except Exception:
+                    pass
+            return True
         return False
+
+    def _copy_tmux_selection_sync(self) -> str | None:
+        """Copia la selección de tmux (si está en copy-mode) al buffer y devuelve
+        el texto. Siempre intenta copiar (sin comprobar pane_in_mode, que con
+        mouse on no se pone a 1); si no hay selección, show-buffer vuelve vacío."""
+        try:
+            self._tmux("send-keys", "-t", self.session, "-X", "copy-selection")
+            out = self._tmux("show-buffer")
+            if out and out.strip():
+                self._tmux("delete-buffer")
+                return out.strip()
+            return None
+        except Exception:
+            return None
 
     def _scroll_to_bottom(self) -> None:
         """Si el panel está en copy-mode (has scrolleado arriba), lo cancela: vuelve
