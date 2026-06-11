@@ -15,8 +15,8 @@ import paramiko
 
 log = logging.getLogger("messorterminal.terminal")
 
-SSH_HOST = "127.0.0.1"
-SSH_PORT = 20776          # this host's sshd listens on 20776, not 22
+SSH_HOST = os.environ.get("WEBTERMINAL_SSH_HOST", "127.0.0.1")
+SSH_PORT = int(os.environ.get("WEBTERMINAL_SSH_PORT", "22"))   # p. ej. 20776 si tu sshd no escucha en 22
 # El acceso a la terminal es SIEMPRE con la contraseña del sistema del usuario.
 # (La barrera externa sigue siendo el cert mTLS + el login web de Cloudflare.)
 TERM_TYPE = "xterm-256color"

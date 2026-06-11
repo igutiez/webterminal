@@ -28,7 +28,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import paramiko
 from fastapi import FastAPI, File, Form, Header, HTTPException, Request, UploadFile, WebSocket
@@ -45,7 +45,10 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 log = logging.getLogger("webterminal")
 
 FRONTEND_DIR = os.environ.get("WEBTERMINAL_FRONTEND", "/opt/webterminal/frontend")
-PUBLIC_URL = os.environ.get("WEBTERMINAL_URL", "https://terminal.messor.app")
+PUBLIC_URL = os.environ.get("WEBTERMINAL_URL", "http://127.0.0.1:8765")
+# Origen del WebSocket para la CSP, derivado de la URL pública (https→wss, http→ws).
+_pu = urlparse(PUBLIC_URL)
+WS_ORIGIN = ("wss://" if _pu.scheme == "https" else "ws://") + (_pu.netloc or "127.0.0.1:8765")
 MAX_CONNECTIONS = int(os.environ.get("WEBTERMINAL_MAX_CONNECTIONS", "5"))
 RESET_TTL_MIN = 30
 MIN_PW_LEN = 8
@@ -60,9 +63,13 @@ _fails_lock = asyncio.Lock()
 
 # Subida de archivos (cualquier tipo) para que Claude (en la sesión SSH) pueda
 # abrirlos. El archivo se guarda aquí y la RUTA se inyecta en la terminal.
-# Limpieza: un cron borra el contenido cada noche a las 00:00 (ver README/setup).
-UPLOAD_DIR = os.environ.get("WEBTERMINAL_UPLOAD_DIR", "/home/ubuntu/imagenes_temp")
+# Limpieza recomendada: un cron que vacíe el directorio cada noche (ver README).
+UPLOAD_DIR = os.environ.get("WEBTERMINAL_UPLOAD_DIR", "/opt/webterminal/uploads")
 MAX_UPLOAD_BYTES = int(os.environ.get("WEBTERMINAL_MAX_UPLOAD_MB", "100")) * 1024 * 1024
+try:
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+except OSError:
+    log.warning("No se pudo crear UPLOAD_DIR=%s", UPLOAD_DIR)
 
 db.init_db()
 
@@ -99,7 +106,7 @@ async def security_headers(request, call_next):
         "default-src 'self'; script-src 'self' https://unpkg.com; "
         "style-src 'self' 'unsafe-inline' https://unpkg.com https://fonts.googleapis.com; "
         "font-src https://fonts.gstatic.com; img-src 'self' data:; "
-        "connect-src 'self' wss://terminal.messor.app"
+        f"connect-src 'self' {WS_ORIGIN}"
     )
     return resp
 

@@ -8,6 +8,7 @@ User=www-data
 Group=www-data
 WorkingDirectory=/opt/webterminal/backend
 Environment="PATH=/opt/webterminal/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+EnvironmentFile=-/opt/webterminal/.env
 ExecStart=/opt/webterminal/venv/bin/uvicorn main:app --host 127.0.0.1 --port 8765
 Restart=always
 RestartSec=3
