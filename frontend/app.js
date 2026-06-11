@@ -19,6 +19,7 @@
   let awayMode = false;
   let remoteHost = null;
   let _focusedTerm = "main";
+  let hostAliases = {};   // {hostname: "nombre humano"} guardado en la cuenta
 
   const $ = (id) => document.getElementById(id);
   const SCREENS = ["login-screen", "forgot-screen", "reset-screen", "ssh-screen", "account-screen", "terminal-screen"];
@@ -636,13 +637,18 @@
     if (opts && opts.persist) saveTheme(id);
   }
 
-  // Carga el tema guardado de la cuenta (tras el login). Si no hay, deja el default.
+  // Carga preferencias de la cuenta (tras el login): tema + alias de hosts remotos.
   async function loadTheme() {
+    let theme = activeThemeId;
     try {
       const res = await fetch("/preferences", { headers: { Authorization: "Bearer " + jwt } });
-      if (res.ok) { const d = await res.json(); if (d.theme && THEMES[d.theme]) { applyTheme(d.theme); return; } }
+      if (res.ok) {
+        const d = await res.json();
+        if (d.aliases && typeof d.aliases === "object") hostAliases = d.aliases;
+        if (d.theme && THEMES[d.theme]) theme = d.theme;
+      }
     } catch (_) {}
-    applyTheme(activeThemeId);
+    applyTheme(theme);
   }
 
   async function saveTheme(id) {
@@ -669,13 +675,40 @@
     if (_focusedTerm === "sec") return { on: T2.isAway(), host: T2.remoteHost() };
     return { on: awayMode, host: remoteHost };
   }
+  // Nombre a mostrar para un host: su alias humano si existe, si no el hostname.
+  function displayHost(host) { return host ? (hostAliases[host] || host) : null; }
+
   function updateAwayBadge() {
     const r = focusedRemote();
     const b = $("away-badge");
     if (b) {
       b.style.display = r.on ? "" : "none";
-      b.textContent = "⬤ REMOTO" + (r.on && r.host ? " · " + r.host : "");
+      const shown = displayHost(r.host);
+      b.textContent = "⬤ REMOTO" + (shown ? " · " + shown : "");
+      b.title = r.on && r.host ? "Pulsa para renombrar “" + r.host + "”" : "";
     }
+  }
+
+  // Renombrar el host remoto actual (clic en el badge). Guarda el alias en la cuenta.
+  async function renameRemote() {
+    const r = focusedRemote();
+    if (!r.on || !r.host) return;
+    const name = await uiPrompt({
+      icon: "pencil", title: "Nombre del servidor remoto",
+      message: "Alias para “" + r.host + "”. Se mostrará en el indicador REMOTO. Vacío = quitar alias.",
+      placeholder: "p. ej. Producción, Vistawib…", value: hostAliases[r.host] || "", ok: "Guardar",
+    });
+    if (name === null) return;
+    const clean = name.trim();
+    if (clean) hostAliases[r.host] = clean; else delete hostAliases[r.host];
+    updateAwayBadge();
+    saveAlias(r.host, clean);
+  }
+  async function saveAlias(host, name) {
+    try {
+      const body = new FormData(); body.append("host", host); body.append("name", name);
+      await fetch("/preferences/alias", { method: "POST", headers: { Authorization: "Bearer " + jwt }, body });
+    } catch (_) {}
   }
 
   // ---------- Selector de tema (popover de swatches en la barra superior) ----------
@@ -810,6 +843,9 @@
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeThemePop(); });
     // El badge "REMOTO" sigue al foco: al enfocar la terminal principal, refléjala.
     if (term && term.textarea) term.textarea.addEventListener("focus", () => { _focusedTerm = "main"; updateAwayBadge(); });
+    // Clic en el badge REMOTO -> renombrar el servidor con un alias humano.
+    const awayBadge = $("away-badge");
+    if (awayBadge) awayBadge.addEventListener("click", renameRemote);
 
     // --- Pegar imagen (Ctrl+V con imagen en el portapapeles) ---
     // A nivel de DOCUMENTO en fase de captura: así interceptamos el pegado antes

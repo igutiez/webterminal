@@ -5,6 +5,7 @@ The SSH identity is NOT stored here: the system user + password are entered at
 terminal-open time. Web login is only the application gate.
 """
 import hashlib
+import json
 import os
 import sqlite3
 import time
@@ -39,6 +40,9 @@ def init_db():
         cols = {r["name"] for r in c.execute("PRAGMA table_info(users)")}
         if "theme" not in cols:
             c.execute("ALTER TABLE users ADD COLUMN theme TEXT")
+        # Alias humanos para hosts remotos: JSON {hostname: "nombre amigable"}.
+        if "host_aliases" not in cols:
+            c.execute("ALTER TABLE users ADD COLUMN host_aliases TEXT")
 
 
 def get_theme(email: str):
@@ -52,6 +56,45 @@ def set_theme(email: str, theme: str) -> bool:
     with _conn() as c:
         cur = c.execute("UPDATE users SET theme = ? WHERE email = ?", (theme, email))
         return cur.rowcount == 1
+
+
+def get_aliases(email: str) -> dict:
+    """Mapa {hostname: nombre amigable} del usuario (vacío si no tiene)."""
+    raw = (get_user(email) or {}).get("host_aliases")
+    if not raw:
+        return {}
+    try:
+        d = json.loads(raw)
+        return d if isinstance(d, dict) else {}
+    except (ValueError, TypeError):
+        return {}
+
+
+def set_alias(email: str, host: str, name: str) -> bool:
+    """Pone (o borra, si name vacío) el alias de un host. Devuelve True si se guardó."""
+    email = (email or "").strip().lower()
+    host = (host or "").strip()
+    name = (name or "").strip()
+    if not host:
+        return False
+    with _conn() as c:
+        row = c.execute("SELECT host_aliases FROM users WHERE email = ?", (email,)).fetchone()
+        if row is None:
+            return False
+        try:
+            d = json.loads(row["host_aliases"]) if row["host_aliases"] else {}
+            if not isinstance(d, dict):
+                d = {}
+        except (ValueError, TypeError):
+            d = {}
+        if name:
+            if len(d) >= 200 and host not in d:
+                return False   # tope defensivo
+            d[host] = name
+        else:
+            d.pop(host, None)
+        c.execute("UPDATE users SET host_aliases = ? WHERE email = ?", (json.dumps(d), email))
+        return True
 
 
 def _hash_pw(password: str) -> str:

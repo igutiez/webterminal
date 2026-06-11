@@ -139,7 +139,9 @@ html, body {
   color: var(--yellow); border: 1px solid color-mix(in srgb, var(--yellow), transparent 55%);
   background: color-mix(in srgb, var(--yellow), transparent 86%);
   padding: 2px 8px; border-radius: 999px; white-space: nowrap;
+  cursor: pointer; transition: background .12s, border-color .12s;
 }
+.away-badge:hover { background: color-mix(in srgb, var(--yellow), transparent 75%); border-color: var(--yellow); }
 
 /* Selector de tema: botón con popover de swatches. */
 .theme-wrap { position: relative; display: inline-flex; }
