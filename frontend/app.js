@@ -875,11 +875,16 @@
     // Copiar automáticamente al seleccionar con el ratón
     term.onSelectionChange(() => { copySel(); });
 
-    // Clic derecho: copia si hay selección, si no pega (texto o imagen)
-    $("terminal-container").addEventListener("contextmenu", (e) => {
-      e.preventDefault();
-      if (copySel()) term.clearSelection(); else pasteFromClipboard();
-    });
+    // Clic derecho: copia si hay selección, si no pega (texto o imagen).
+    // Lo enganchamos en el elemento xterm (term.element), no en el contenedor,
+    // porque tras mover el montaje a .term-host la propagación puede fallar.
+    if (term.element) {
+      term.element.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (copySel()) term.clearSelection(); else pasteFromClipboard();
+      });
+    }
 
     term.attachCustomKeyEventHandler((ev) => {
       if (ev.type !== "keydown") return true;
@@ -1770,6 +1775,15 @@
       tryWebgl(t);
       t.onData((d) => { if (ws2 && ws2.readyState === WebSocket.OPEN) ws2.send(d); });
       t.onSelectionChange(() => { const s = t.getSelection(); if (s) navigator.clipboard.writeText(s).catch(() => {}); });
+      // Clic derecho en la 2ª terminal: copia o pega (mismo comportamiento que la principal).
+      if (t.element) {
+        t.element.addEventListener("contextmenu", (e) => {
+          e.preventDefault(); e.stopPropagation();
+          const sel = t.getSelection();
+          if (sel) { navigator.clipboard.writeText(sel).catch(() => {}); t.clearSelection(); }
+          else { navigator.clipboard.readText().then(txt => { if (txt && ws2 && ws2.readyState === WebSocket.OPEN) ws2.send(txt); }).catch(() => {}); }
+        });
+      }
       // El badge "REMOTO" sigue al foco: al enfocar esta 2ª terminal, refléjala.
       if (t.textarea) t.textarea.addEventListener("focus", () => { _focusedTerm = "sec"; updateAwayBadge(); });
     }
