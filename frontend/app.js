@@ -708,6 +708,14 @@
         const d = await res.json();
         if (d.aliases && typeof d.aliases === "object") aliases = d.aliases;
         if (d.sessionAliases && typeof d.sessionAliases === "object") sessionAliases = d.sessionAliases;
+        // Snippets del backend (si no hay, se migran de localStorage más abajo)
+        if (d.snippets && Array.isArray(d.snippets) && d.snippets.length) {
+          saveLocalSnippets(d.snippets);
+        } else {
+          // Migrar localStorage → backend
+          const local = loadLocalSnippets();
+          if (local.length) saveRemoteSnippets(local);
+        }
         if (d.theme && THEMES[d.theme]) theme = d.theme;
       }
     } catch (_) {}
@@ -1045,13 +1053,28 @@
   }
 
   // ---------- COMANDOS FAVORITOS (snippets en la keybar) ----------
-  // Guardados en localStorage como [{label, cmd, enter}]. Clic en un chip => envía
-  // el comando al PTY (con Intro si enter=true). Editables desde un modal.
+  // Persistencia dual: localStorage (rápido, offline) + backend (cuenta, multidispositivo).
+  // Al arrancar, el backend manda. Si está vacío, se migra lo que haya en localStorage.
   const SNIP_KEY = "wt_snippets";
-  function loadSnippets() {
+  function loadLocalSnippets() {
     try { const r = JSON.parse(localStorage.getItem(SNIP_KEY) || "[]"); return Array.isArray(r) ? r : []; } catch (_) { return []; }
   }
-  function saveSnippets(arr) { try { localStorage.setItem(SNIP_KEY, JSON.stringify(arr)); } catch (_) {} renderSnippets(); }
+  function saveLocalSnippets(arr) { try { localStorage.setItem(SNIP_KEY, JSON.stringify(arr)); } catch (_) {} renderSnippets(); }
+  async function saveRemoteSnippets(arr) {
+    try {
+      const res = await fetch("/preferences/snippets", {
+        method: "POST", headers: { Authorization: "Bearer " + jwt, "Content-Type": "application/json" },
+        body: JSON.stringify({ snippets: arr }),
+      });
+      if (!res.ok) console.warn("saveSnippets:", res.status);
+    } catch (e) { console.warn("saveSnippets err:", e); }
+  }
+  // Guarda en ambos sitios y repinta
+  async function saveSnippets(arr) {
+    saveLocalSnippets(arr);
+    saveRemoteSnippets(arr);
+  }
+  function loadSnippets() { return loadLocalSnippets(); }
   function renderSnippets() {
     const box = $("kb-snips"); if (!box) return;
     box.innerHTML = "";
@@ -2221,7 +2244,8 @@
       const srvName = s.remote && s.host ? (aliases[s.host] || s.host) : null;
       el.title = "Sesión: " + (sessionAliases[s.label] || s.label)
         + (s.current ? " (actual)" : "")
-        + (srvName ? " · REMOTO: " + srvName : " · LOCAL");
+        + (srvName ? " · REMOTO: " + srvName : " · LOCAL")
+        + " · doble clic para renombrar";
       el.innerHTML = '<span class="tab-ico">' + icon("terminal") + '</span><span class="tab-name"></span>';
       el.querySelector(".tab-name").textContent = sessionAliases[s.label] || s.label;
       if (sessions.length > 1) {   // se puede cerrar cualquiera salvo si es la única
@@ -2236,6 +2260,12 @@
       el.addEventListener("click", (e) => {
         if (e.target.closest(".tab-close")) return;
         if (s.current) switchTab(_TAB_TERM); else switchSession(s.label);
+      });
+      // Doble clic en la pestaña = renombrar la sesión (su nombre).
+      el.addEventListener("dblclick", (e) => {
+        if (e.target.closest(".tab-close")) return;
+        e.preventDefault();
+        renameSessionByLabel(s.label);
       });
       bar.appendChild(el);
     });

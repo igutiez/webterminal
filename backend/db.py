@@ -46,6 +46,9 @@ def init_db():
         # Alias humanos para sesiones/pestañas: JSON {etiqueta_tmux: "nombre"}.
         if "session_aliases" not in cols:
             c.execute("ALTER TABLE users ADD COLUMN session_aliases TEXT")
+        # Comandos favoritos (snippets): JSON [{label, cmd, enter}].
+        if "snippets" not in cols:
+            c.execute("ALTER TABLE users ADD COLUMN snippets TEXT")
 
 
 def get_theme(email: str):
@@ -137,6 +140,28 @@ def set_session_alias(email: str, label: str, name: str) -> bool:
             d.pop(label, None)
         c.execute("UPDATE users SET session_aliases = ? WHERE email = ?", (json.dumps(d), email))
         return True
+
+
+def get_snippets(email: str) -> list:
+    """Comandos favoritos del usuario: [{label, cmd, enter}]."""
+    raw = (get_user(email) or {}).get("snippets")
+    if not raw:
+        return []
+    try:
+        d = json.loads(raw)
+        return d if isinstance(d, list) else []
+    except (ValueError, TypeError):
+        return []
+
+
+def set_snippets(email: str, snippets: list) -> bool:
+    """Guarda los comandos favoritos. Máximo 50 para evitar abuso."""
+    email = (email or "").strip().lower()
+    snippets = snippets[:50]
+    with _conn() as c:
+        cur = c.execute("UPDATE users SET snippets = ? WHERE email = ?",
+                        (json.dumps(snippets), email))
+        return cur.rowcount == 1
 
 
 def _hash_pw(password: str) -> str:

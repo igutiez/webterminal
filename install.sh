@@ -35,7 +35,7 @@ Modo desatendido: exporta antes de ejecutar (las que falten se preguntan):
   WT_DOMAIN=terminal.ejemplo.com    dominio (modos caddy/cloudflared)
   WT_BIND=127.0.0.1                 IP de escucha (modo local)
   WT_APP_PORT=8765                  puerto interno de la app
-  WT_SSH_PORT=22                    puerto del sshd de esta máquina
+  WT_SSH_PORT=20776                 puerto del sshd de esta máquina (el instalador lo detecta)
   WT_ADMIN_EMAIL=tu@correo.com      primer usuario web
   WT_ADMIN_PASSWORD=...             su contraseña (mín. 8)
 EOF
@@ -100,9 +100,24 @@ APP_PORT="${WT_APP_PORT:-$(env_get WEBTERMINAL_APP_PORT)}"; ask APP_PORT "Puerto
 [[ "$MODE" == "local" ]] && PUBLIC_URL="http://$BIND:$APP_PORT"
 
 step "SSH de esta máquina (a qué se conecta la terminal)"
+DETECTED_SSH=""
+# 1) sshd -T da la config efectiva (incluye drop-ins en sshd_config.d/)
 DETECTED_SSH="$( (sshd -T 2>/dev/null || true) | awk '/^port /{print $2; exit}')"
-[[ -z "$DETECTED_SSH" ]] && DETECTED_SSH="$(grep -iE '^ *Port +[0-9]+' /etc/ssh/sshd_config 2>/dev/null | awk '{print $2; exit}')"
-SSH_PORT="${WT_SSH_PORT:-}"; ask SSH_PORT "Puerto del sshd local" "${DETECTED_SSH:-22}"
+# 2) si no, barremos drop-ins y el fichero principal
+if [[ -z "$DETECTED_SSH" ]]; then
+  for f in /etc/ssh/sshd_config.d/*.conf /etc/ssh/sshd_config; do
+    [[ -f "$f" ]] || continue
+    DETECTED_SSH="$(grep -ihE '^ *Port +[0-9]+' "$f" 2>/dev/null | awk '{print $2; exit}')"
+    [[ -n "$DETECTED_SSH" ]] && break
+  done
+fi
+SSH_PORT="${WT_SSH_PORT:-}"
+if [[ -n "$DETECTED_SSH" ]]; then
+  ask SSH_PORT "Puerto del sshd local (detectado)" "${DETECTED_SSH}"
+else
+  ask SSH_PORT "Puerto del sshd local (p. ej. 20776)" ""
+  [[ -z "$SSH_PORT" ]] && die "Necesitas indicar el puerto SSH."
+fi
 note "Cada usuario abre la terminal con SU usuario y contraseña del sistema."
 note "Asegúrate de que sshd permite PasswordAuthentication para esos usuarios."
 

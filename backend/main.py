@@ -223,7 +223,33 @@ async def preferences_get(authorization: str | None = Header(default=None)):
         "theme": db.get_theme(email),
         "aliases": db.get_aliases(email),          # {hostname: nombre amigable}
         "sessionAliases": db.get_session_aliases(email),  # {etiqueta tmux: nombre}
+        "snippets": db.get_snippets(email),         # comandos favoritos
     }
+
+
+@app.get("/preferences/snippets")
+async def preferences_snippets_get(authorization: str | None = Header(default=None)):
+    """Solo los comandos favoritos (para cargar rápido sin el resto de prefs)."""
+    return {"snippets": db.get_snippets(_bearer(authorization))}
+
+
+@app.post("/preferences/snippets")
+async def preferences_snippets_set(
+    request: Request,
+    authorization: str | None = Header(default=None),
+):
+    """Guarda los comandos favoritos. Body: JSON {snippets: [{label, cmd, enter}]}."""
+    email = _bearer(authorization)
+    try:
+        body = await request.json()
+        snippets = body.get("snippets", []) if isinstance(body, dict) else []
+    except Exception:
+        raise HTTPException(status_code=400, detail="JSON inválido")
+    if not isinstance(snippets, list):
+        raise HTTPException(status_code=400, detail="snippets debe ser un array")
+    db.set_snippets(email, snippets)
+    log.info("snippets saved web=%s count=%d", email, len(snippets))
+    return {"ok": True, "count": len(snippets)}
 
 
 @app.post("/preferences/alias")
