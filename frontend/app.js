@@ -2257,15 +2257,23 @@
         });
         el.appendChild(x);
       }
+      // Clic simple = cambiar de sesión; doble clic = renombrar. Como cambiar
+      // de sesión repinta la barra (destruye este nodo), NO podemos confiar en
+      // el evento "dblclick" nativo: el 2º clic caería sobre un nodo nuevo.
+      // Solución: retrasamos el clic simple; si llega un 2º clic a tiempo,
+      // cancelamos el cambio y renombramos.
+      let clickTimer = null;
       el.addEventListener("click", (e) => {
         if (e.target.closest(".tab-close")) return;
-        if (s.current) switchTab(_TAB_TERM); else switchSession(s.label);
-      });
-      // Doble clic en la pestaña = renombrar la sesión (su nombre).
-      el.addEventListener("dblclick", (e) => {
-        if (e.target.closest(".tab-close")) return;
-        e.preventDefault();
-        renameSessionByLabel(s.label);
+        if (clickTimer) {            // 2º clic dentro de la ventana → renombrar
+          clearTimeout(clickTimer); clickTimer = null;
+          renameSessionByLabel(s.label);
+          return;
+        }
+        clickTimer = setTimeout(() => {
+          clickTimer = null;
+          if (s.current) switchTab(_TAB_TERM); else switchSession(s.label);
+        }, 230);
       });
       bar.appendChild(el);
     });
