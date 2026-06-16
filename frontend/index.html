@@ -49,6 +49,7 @@
 <symbol id="ic-arrow-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14" /> <path d="m12 5 7 7-7 7" /></symbol>
 <symbol id="ic-rotate-cw" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" /> <path d="M21 3v5h-5" /></symbol>
 <symbol id="ic-folder-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 10v6" /> <path d="M9 13h6" /> <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" /></symbol>
+<symbol id="ic-folder-up" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V9" /> <path d="m9 12 3-3 3 3" /> <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" /></symbol>
 <symbol id="ic-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18" /> <path d="m6 6 12 12" /></symbol>
 <symbol id="ic-trash-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 11v6" /> <path d="M14 11v6" /> <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" /> <path d="M3 6h18" /> <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></symbol>
 <symbol id="ic-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3" /> <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /> <path d="m7 10 5 5 5-5" /></symbol>
@@ -198,13 +199,14 @@
             <button id="files-newfile" class="fbtn" title="Nuevo archivo de texto"><svg class="ic"><use href="#ic-file-plus"/></svg></button>
             <button id="files-mkdir" class="fbtn" title="Nueva carpeta"><svg class="ic"><use href="#ic-folder-plus"/></svg></button>
             <button id="files-upload-btn" class="fbtn" title="Subir archivos"><svg class="ic"><use href="#ic-upload"/></svg></button>
+            <button id="files-upload-dir-btn" class="fbtn" title="Subir carpeta"><svg class="ic"><use href="#ic-folder-up"/></svg></button>
             <button id="files-close" class="fbtn" title="Cerrar panel"><svg class="ic"><use href="#ic-x"/></svg></button>
           </span>
         </div>
         <div id="files-crumbs" class="files-crumbs"></div>
         <div id="files-list" class="files-list"></div>
         <div id="files-status" class="files-status"></div>
-        <div id="files-drop" class="files-drop">Suelta archivos aquí</div>
+        <div id="files-drop" class="files-drop">Suelta archivos o carpetas aquí</div>
         <div id="files-resizer" class="files-resizer" title="Arrastra para ensanchar el panel"></div>
       </aside>
       <div id="main-area">
@@ -261,6 +263,7 @@
             <div id="viewer-md" class="viewer-md" hidden></div>
             <div id="viewer-img" class="viewer-img" hidden><img id="viewer-img-el" alt="" /></div>
             <iframe id="viewer-iframe" class="viewer-iframe" hidden referrerpolicy="no-referrer"></iframe>
+            <div id="viewer-pdf" class="viewer-pdf" hidden></div>
             <div id="viewer-edit-wrap" class="viewer-edit-wrap" hidden>
               <pre id="viewer-edit-hl" class="viewer-edit-hl" aria-hidden="true"></pre>
               <textarea id="viewer-edit-area" class="viewer-edit-area" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" wrap="off"></textarea>
@@ -302,6 +305,7 @@
     <div id="toast" class="toast"></div>
 
     <input id="files-input" type="file" multiple style="display:none" />
+    <input id="files-dir-input" type="file" webkitdirectory directory multiple style="display:none" />
 
     <!-- Diálogo: pedir a un modelo (selección + instrucción + destino) -->
     <div id="ai-overlay" class="ai-overlay" hidden>
@@ -415,6 +419,7 @@
   </div>
 
   <script src="highlight.min.js?v=1"></script>
-  <script src="app.js?v=120"></script>
+  <script src="pdf.min.js?v=1"></script>
+  <script src="app.js?v=124"></script>
 </body>
 </html>

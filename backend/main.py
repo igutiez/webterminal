@@ -17,6 +17,7 @@ import glob
 import json
 import logging
 import math
+import mimetypes
 import os
 import posixpath
 import re
@@ -104,7 +105,9 @@ async def security_headers(request, call_next):
     # DENY ni el CSP estricto (si no, el iframe no mostraría la webapp proxeada).
     if request.url.path.startswith("/preview"):
         return resp
-    resp.headers["X-Frame-Options"] = "DENY"
+    # El visor integrado enmarca PDFs servidos por /files/download (mismo origen):
+    # ahí permitimos SAMEORIGIN en vez de DENY para que el iframe pueda mostrarlos.
+    resp.headers["X-Frame-Options"] = "SAMEORIGIN" if request.url.path == "/files/download" else "DENY"
     resp.headers["X-Content-Type-Options"] = "nosniff"
     resp.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     # Force browsers to revalidate static assets so updates aren't masked by cache.
@@ -113,6 +116,9 @@ async def security_headers(request, call_next):
         "default-src 'self'; script-src 'self' https://unpkg.com; "
         "style-src 'self' 'unsafe-inline' https://unpkg.com https://fonts.googleapis.com; "
         "font-src https://fonts.gstatic.com; img-src 'self' data:; "
+        # El visor de PDF carga los bytes por fetch y los muestra como blob: en un
+        # iframe (evita el X-Frame-Options que mete el proxy/Access por delante).
+        "frame-src 'self' blob:; "
         f"connect-src 'self' {WS_ORIGIN}"
     )
     return resp
@@ -129,6 +135,19 @@ def _safe_filename(name: str) -> str:
     name = os.path.basename((name or "").strip())
     name = re.sub(r"[^A-Za-z0-9._ -]", "_", name).lstrip(".")
     return name[:120] or "archivo"
+
+
+def _safe_relpath(rel: str) -> str:
+    """Ruta relativa segura para subir carpetas: conserva subdirectorios pero
+    bloquea rutas absolutas y '..'. Cada componente se sanea como un nombre de
+    archivo. Devuelve '' si no queda nada utilizable."""
+    parts = []
+    for comp in (rel or "").replace("\\", "/").split("/"):
+        comp = comp.strip()
+        if not comp or comp in (".", ".."):
+            continue
+        parts.append(_safe_filename(comp))
+    return "/".join(p for p in parts if p)
 
 
 def _unique_path(directory: str, name: str) -> str:
@@ -307,10 +326,15 @@ async def preferences_set(
 async def upload_file(
     authorization: str | None = Header(default=None),
     file: UploadFile = File(...),
+    relpath: str = Form(default=""),
 ):
     """Recibe un archivo de CUALQUIER tipo (autenticado), lo guarda en UPLOAD_DIR
     y devuelve su ruta. La ruta se inyecta en la terminal para que Claude lo abra.
-    El contenido se borra entero cada noche a las 00:00 (cron)."""
+    El contenido se borra entero cada noche a las 00:00 (cron).
+
+    Si llega `relpath` (subida de carpeta: "proyecto/src/app.js"), recrea el árbol
+    bajo UPLOAD_DIR y devuelve además `root` (la carpeta raíz) para inyectar una
+    sola vez en la terminal en lugar de un archivo por línea."""
     web_email = _bearer(authorization)
 
     data = await file.read(MAX_UPLOAD_BYTES + 1)
@@ -321,7 +345,19 @@ async def upload_file(
         raise HTTPException(status_code=400, detail="Archivo vacío")
 
     os.makedirs(UPLOAD_DIR, exist_ok=True)
-    path = _unique_path(UPLOAD_DIR, _safe_filename(file.filename))
+    rel = _safe_relpath(relpath)
+    if rel and "/" in rel:
+        # Subida de carpeta: recrea el árbol (sin sufijo único; re-subir la misma
+        # carpeta sobreescribe sus archivos, que es lo esperado en la zona temporal).
+        path = os.path.join(UPLOAD_DIR, rel)
+        root = os.path.join(UPLOAD_DIR, rel.split("/")[0])
+        base = os.path.abspath(UPLOAD_DIR)
+        if os.path.commonpath([os.path.abspath(path), base]) != base:
+            raise HTTPException(status_code=400, detail="Ruta no válida")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+    else:
+        path = _unique_path(UPLOAD_DIR, _safe_filename(file.filename))
+        root = path
     with open(path, "wb") as fh:
         fh.write(data)
     try:
@@ -329,7 +365,7 @@ async def upload_file(
     except OSError:
         pass
     log.info("file uploaded web=%s -> %s (%d bytes)", web_email, path, len(data))
-    return {"path": path, "name": os.path.basename(path)}
+    return {"path": path, "name": os.path.basename(path), "root": root}
 
 
 async def _locked_for(key: str) -> int:
@@ -592,7 +628,7 @@ async def files_list(fsid: str, path: str = "", authorization: str | None = Head
 
 
 @app.get("/files/download")
-async def files_download(fsid: str, path: str, token: str = ""):
+async def files_download(fsid: str, path: str, token: str = "", inline: int = 0):
     # El token va por query para poder descargar en streaming directo en el navegador.
     web_email = auth.verify_token(token)
     term = _resolve_term(fsid, web_email)
@@ -627,8 +663,16 @@ async def files_download(fsid: str, path: str, token: str = ""):
 
     name = posixpath.basename(path) or "archivo"
     ascii_name = name.encode("ascii", "ignore").decode() or "archivo"
-    disp = f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(name)}"
-    return StreamingResponse(gen(), media_type="application/octet-stream",
+    # inline=1: el visor lo enmarca (PDF, etc.) → disposición 'inline' y el tipo MIME
+    # real para que el navegador lo renderice (con nosniff hay que declararlo bien).
+    # Por defecto: descarga forzada como octet-stream.
+    if inline:
+        ctype = mimetypes.guess_type(name)[0] or "application/octet-stream"
+        disp = f"inline; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(name)}"
+    else:
+        ctype = "application/octet-stream"
+        disp = f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(name)}"
+    return StreamingResponse(gen(), media_type=ctype,
                              headers={"Content-Disposition": disp, "Content-Length": str(st.st_size)})
 
 
@@ -802,9 +846,29 @@ async def files_write(
     return res
 
 
-def _fs_put(term, fileobj, remote):
+def _fs_mkdirs(sftp, path):
+    """mkdir -p sobre SFTP: crea recursivamente cada nivel que falte."""
+    if not path or path in ("/", "."):
+        return
+    try:
+        sftp.stat(path)
+        return  # ya existe
+    except FileNotFoundError:
+        pass
+    parent = posixpath.dirname(path)
+    if parent and parent != path:
+        _fs_mkdirs(sftp, parent)
+    try:
+        sftp.mkdir(path)
+    except OSError:
+        pass  # carrera: otro lo creó entre el stat y el mkdir
+
+
+def _fs_put(term, fileobj, remote, make_parents=False):
     sftp = term.open_sftp()
     try:
+        if make_parents:
+            _fs_mkdirs(sftp, posixpath.dirname(remote))
         sftp.putfo(fileobj, remote)
     finally:
         sftp.close()
@@ -815,19 +879,27 @@ async def files_upload(
     fsid: str = Form(...),
     dir: str = Form(...),
     file: UploadFile = File(...),
+    relpath: str = Form(default=""),
     authorization: str | None = Header(default=None),
 ):
+    """Sube un archivo por SFTP a `dir`. Si llega `relpath` (subida de carpeta,
+    "proyecto/src/app.js"), recrea las subcarpetas necesarias y conserva el árbol."""
     web_email = _bearer(authorization)
     term = _resolve_term(fsid, web_email)
-    name = _safe_filename(file.filename)
-    remote = posixpath.join(dir, name)
+    rel = _safe_relpath(relpath)
+    if rel and "/" in rel:
+        remote = posixpath.join(dir, rel)
+        make_parents = True
+    else:
+        remote = posixpath.join(dir, _safe_filename(file.filename))
+        make_parents = False
     try:
         file.file.seek(0)
-        await asyncio.to_thread(_fs_put, term, file.file, remote)
+        await asyncio.to_thread(_fs_put, term, file.file, remote, make_parents)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"No se pudo subir: {exc}")
     log.info("sftp upload web=%s -> %s", web_email, remote)
-    return {"ok": True, "name": name, "path": remote}
+    return {"ok": True, "name": posixpath.basename(remote), "path": remote}
 
 
 def _fs_mkdir(term, path):

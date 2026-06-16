@@ -289,28 +289,72 @@
   function uiPrompt(opts) { return _uiModal.open({ ...opts, input: true }); }
   function uiConfirm(opts) { return _uiModal.open({ ...opts, input: false }); }
 
-  async function uploadFile(file) {
-    if (!file || !jwt) return;
+  // ---------- SUBIDA DE CARPETAS (entra recursivamente en lo que sueltes) ----------
+  // Un drop de carpeta no llega en dataTransfer.files (eso da entradas fantasma y
+  // "error de red"): hay que usar webkitGetAsEntry() y recorrer el árbol. Devuelve
+  // una lista [{file, relpath}] donde relpath conserva las subcarpetas.
+  function _entryFile(entry) {
+    return new Promise((res) => entry.file((f) => res(f), () => res(null)));
+  }
+  function _readEntries(reader) {
+    return new Promise((res) => reader.readEntries((ents) => res(ents), () => res([])));
+  }
+  async function _walkEntry(entry, prefix, out) {
+    if (entry.isFile) {
+      const f = await _entryFile(entry);
+      if (f) out.push({ file: f, relpath: prefix + entry.name });
+    } else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      let batch;
+      do {  // readEntries devuelve por tandas: hay que llamarlo hasta que vuelva vacío
+        batch = await _readEntries(reader);
+        for (const e of batch) await _walkEntry(e, prefix + entry.name + "/", out);
+      } while (batch.length);
+    }
+  }
+  // OJO: las entradas hay que capturarlas SÍNCRONAMENTE dentro del handler de drop
+  // (el DataTransfer caduca al primer await), por eso se recogen antes de recorrer.
+  async function collectDropItems(dt) {
+    const out = [];
+    const entries = [];
+    for (const it of (dt && dt.items ? Array.from(dt.items) : [])) {
+      if (it.kind !== "file") continue;
+      const entry = it.webkitGetAsEntry && it.webkitGetAsEntry();
+      if (entry) entries.push(entry);
+      else { const f = it.getAsFile && it.getAsFile(); if (f) out.push({ file: f, relpath: f.name }); }
+    }
+    if (entries.length) { for (const en of entries) await _walkEntry(en, "", out); }
+    else { for (const f of (dt && dt.files ? dt.files : [])) out.push({ file: f, relpath: f.name }); }
+    return out;
+  }
+
+  async function uploadFile(file, relpath, inject) {
+    if (inject === undefined) inject = true;
+    if (!file || !jwt) return null;
     let name = file.name;
     if (!name) {  // Blob pegado del portapapeles (sin nombre)
       const ext = ((file.type || "").split("/")[1] || "bin").replace("jpeg", "jpg");
       name = "pegado-" + Date.now() + "." + ext;
     }
-    showToast("Subiendo " + name + "…");
+    if (inject) showToast("Subiendo " + name + "…");
     const fd = new FormData();
     fd.append("file", file, name);
+    if (relpath && relpath !== name) fd.append("relpath", relpath);
     try {
       const res = await fetch("/upload", { method: "POST", headers: { Authorization: "Bearer " + jwt }, body: fd });
       const d = await res.json().catch(() => ({}));
-      if (!res.ok) { showToast(d.detail || ("Error al subir (" + res.status + ")"), true); return; }
-      // Inyectar la ruta en la terminal (como si se tecleara) para que Claude la abra.
-      // Entrecomillamos si tiene espacios para que sea válida también en el shell.
-      const p = d.path;
-      const arg = /\s/.test(p) ? "'" + p.replace(/'/g, "'\\''") + "'" : p;
-      if (ws && ws.readyState === WebSocket.OPEN) ws.send(arg + " ");
-      showToast("Archivo listo → " + d.name);
-      if (term) term.focus();
-    } catch (_) { showToast("Error de red al subir el archivo", true); }
+      if (!res.ok) { showToast(d.detail || ("Error al subir (" + res.status + ")"), true); return null; }
+      if (inject) {
+        // Inyectar la ruta en la terminal (como si se tecleara) para que Claude la abra.
+        // Entrecomillamos si tiene espacios para que sea válida también en el shell.
+        const p = d.path;
+        const arg = /\s/.test(p) ? "'" + p.replace(/'/g, "'\\''") + "'" : p;
+        if (ws && ws.readyState === WebSocket.OPEN) ws.send(arg + " ");
+        showToast("Archivo listo → " + d.name);
+        if (term) term.focus();
+      }
+      return d.root || d.path;   // raíz a inyectar (carpeta si fue subida de árbol)
+    } catch (_) { showToast("Error de red al subir el archivo", true); return null; }
   }
 
   // ---------- CAPTURA DE PANTALLA (para que Claude "vea" otra pestaña/ventana) ----------
@@ -965,10 +1009,25 @@
     const tc = $("terminal-container");
     tc.addEventListener("dragover", (e) => { e.preventDefault(); tc.classList.add("drag-over"); });
     tc.addEventListener("dragleave", () => tc.classList.remove("drag-over"));
-    tc.addEventListener("drop", (e) => {
+    tc.addEventListener("drop", async (e) => {
       e.preventDefault(); tc.classList.remove("drag-over");
-      const files = (e.dataTransfer && e.dataTransfer.files) || [];
-      for (const f of files) uploadFile(f);
+      const items = await collectDropItems(e.dataTransfer);
+      if (!items.length) return;
+      const hasTree = items.some((it) => it.relpath.indexOf("/") >= 0);
+      if (!hasTree) { for (const { file } of items) uploadFile(file); return; }
+      // Hay carpetas: sube todo SIN inyectar y luego inyecta cada raíz una sola vez.
+      showToast("Subiendo carpeta (" + items.length + " archivos)…");
+      const roots = [];
+      for (const { file, relpath } of items) {
+        const r = await uploadFile(file, relpath, false);
+        if (r && roots.indexOf(r) < 0) roots.push(r);
+      }
+      for (const p of roots) {
+        const arg = /\s/.test(p) ? "'" + p.replace(/'/g, "'\\''") + "'" : p;
+        if (ws && ws.readyState === WebSocket.OPEN) ws.send(arg + " ");
+      }
+      if (roots.length) showToast("Carpeta lista ✓");
+      if (term) term.focus();
     });
 
     // --- Botón 📎 + input de archivo (cualquier tipo, varios a la vez) ---
@@ -1366,19 +1425,21 @@
   function _isMd(tab) { return !!tab && tab.kind !== "image" && /\.(md|markdown|mdown|mkd)$/i.test(tab.name || ""); }
   const _IMG_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "avif", "ico"]);
   function _isImageName(name) { const i = (name || "").lastIndexOf("."); return i >= 0 && _IMG_EXTS.has(name.slice(i + 1).toLowerCase()); }
+  function _isPdfName(name) { return /\.pdf$/i.test(name || ""); }
   // URL de bytes crudos del archivo (token por query) — sirve para <img> y descargas.
   function _fileURL(path) { return "/files/download?fsid=" + encodeURIComponent(fsid) + "&path=" + encodeURIComponent(path) + "&token=" + encodeURIComponent(jwt); }
   // Muestra/oculta los botones que solo tienen sentido en archivos de texto.
   function _applyToolbarForTab(tab) {
     const isImg = !!tab && tab.kind === "image";
     const isPrev = !!tab && tab.kind === "preview";
-    const hideText = isImg || isPrev;
+    const isPdf = !!tab && tab.kind === "pdf";
+    const hideText = isImg || isPrev || isPdf;
     ["viewer-ai", "viewer-edit", "viewer-wrap", "viewer-copy", "viewer-font-dec", "viewer-font-inc"].forEach((id) => {
       const b = $(id); if (b) b.style.display = hideText ? "none" : "";
     });
-    const dl = $("viewer-download"); if (dl) dl.style.display = isPrev ? "none" : "";   // preview no se descarga
+    const dl = $("viewer-download"); if (dl) dl.style.display = isPrev ? "none" : "";   // preview no se descarga (el PDF sí)
     const runBtn = $("viewer-run"); if (runBtn) runBtn.hidden = !(tab && !hideText && _runnable(tab.name));
-    const ext = $("viewer-openext"); if (ext) ext.hidden = !isPrev;                     // abrir en navegador: solo preview
+    const ext = $("viewer-openext"); if (ext) ext.hidden = !(isPrev || isPdf);          // abrir en navegador: preview y PDF
   }
   // ---------- Ejecutar archivos en la terminal (.py, .sh, .js…) ----------
   const _RUN = {
@@ -1525,13 +1586,14 @@
   // Decide qué panel del visor se ve (texto plano vs Markdown) según el archivo
   // y la preferencia _mdRendered. El botón MD solo aparece en archivos .md.
   function _applyViewMode(tab) {
-    const pre = $("viewer-pre"), md = $("viewer-md"), btn = $("viewer-md-btn"), imgp = $("viewer-img"), ifr = $("viewer-iframe");
+    const pre = $("viewer-pre"), md = $("viewer-md"), btn = $("viewer-md-btn"), imgp = $("viewer-img"), ifr = $("viewer-iframe"), pdf = $("viewer-pdf");
     if (_editing) return;   // editando manda el textarea; no tocamos paneles
     _applyToolbarForTab(tab);
     if (tab && tab.kind === "preview") {   // preview: solo el iframe
       if (pre) pre.hidden = true;
       if (md) md.hidden = true;
       if (imgp) imgp.hidden = true;
+      if (pdf) pdf.hidden = true;
       if (ifr) ifr.hidden = false;
       if (btn) btn.hidden = true;
       return;
@@ -1540,10 +1602,20 @@
     if (tab && tab.kind === "image") {   // imágenes: solo el panel <img>
       if (pre) pre.hidden = true;
       if (md) md.hidden = true;
+      if (pdf) pdf.hidden = true;
       if (imgp) imgp.hidden = false;
       if (btn) btn.hidden = true;
       return;
     }
+    if (tab && tab.kind === "pdf") {      // PDF: solo el <iframe> del visor nativo
+      if (pre) pre.hidden = true;
+      if (md) md.hidden = true;
+      if (imgp) imgp.hidden = true;
+      if (pdf) pdf.hidden = false;
+      if (btn) btn.hidden = true;
+      return;
+    }
+    if (pdf) pdf.hidden = true;
     if (imgp) imgp.hidden = true;
     const isMd = _isMd(tab);
     if (btn) btn.hidden = !isMd;
@@ -1747,6 +1819,14 @@
       $("viewer-name").textContent = tab.name;
       $("viewer-meta").textContent = (tab.size ? humanSize(tab.size) + " · " : "") + tab.path;
       _applyViewMode(tab);
+      return;
+    }
+    if (tab.kind === "pdf") {        // PDF: pintado en <canvas> con pdf.js
+      $("viewer-name").textContent = tab.name;
+      $("viewer-meta").textContent = (tab.size ? humanSize(tab.size) + " · " : "") + tab.path;
+      _applyViewMode(tab);   // muestra el contenedor #viewer-pdf antes de medir su ancho
+      const host = $("viewer-pdf");
+      if (host && host.dataset.tab !== tab.id) _renderPdf(tab);   // pinta si aún no es suyo
       return;
     }
     const code = $("viewer-code"); if (!code) return;
@@ -2047,7 +2127,7 @@
   }
   function _openExternal() {
     const t = _viewerTabs.get(_activeTab);
-    if (t && t.kind === "preview") window.open(t.url, "_blank", "noopener");
+    if (t && (t.kind === "preview" || t.kind === "pdf")) window.open(t.url, "_blank", "noopener");
   }
 
   // ---------- Modal/lightbox de imagen a pantalla completa ----------
@@ -2338,6 +2418,8 @@
     if (_editing && _editTabId === id && !await _tryExitEdit()) return;
     if (_findActive) _resetFind();
     const wasActive = _activeTab === id;
+    const closing = _viewerTabs.get(id);
+    if (closing && closing.pdfDoc) { try { closing.pdfDoc.destroy(); } catch (_) {} }
     _viewerTabs.delete(id);
     // En split: si el hueco del visor se queda sin archivos, conviértelo en terminal.
     if (_splitActive() && _viewerTabs.size === 0) {
@@ -2364,6 +2446,55 @@
     if (_activeTab === _TAB_TERM) { fsRefit(); try { term && term.focus(); } catch (_) {} }
   }
 
+  // El worker de pdf.js va en el mismo origen (evita problemas de CSP/cross-origin).
+  if (window.pdfjsLib) { try { pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.js?v=1"; } catch (_) {} }
+
+  // Renderiza el PDF en <canvas> con pdf.js (NO iframe): así no entran en juego ni
+  // X-Frame-Options ni frame-src ni el proxy/Access que tiene delante el sitio. Los
+  // bytes se bajan por fetch (igual que el texto) y se pintan página a página.
+  async function _renderPdf(tab) {
+    if (!tab || !fsid) return;
+    const host = $("viewer-pdf");
+    if (!host) return;
+    if (!window.pdfjsLib) { host.textContent = "Visor de PDF no disponible. Recarga la página."; return; }
+    host.dataset.tab = tab.id;   // este contenedor ya es de esta pestaña (evita repintar en bucle)
+    fsStatus("Cargando PDF '" + tab.name + "'…");
+    try {
+      let doc = tab.pdfDoc;
+      if (!doc) {
+        const res = await fetch(_fileURL(tab.path), { headers: fsHeaders() });
+        if (!res.ok) { host.dataset.tab = ""; fsStatus("No se pudo cargar el PDF (" + res.status + ")", "err"); return; }
+        const buf = await res.arrayBuffer();
+        tab.size = buf.byteLength;
+        doc = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
+        tab.pdfDoc = doc;
+      }
+      if (_activeTab !== tab.id && _lastViewerId !== tab.id) return;   // cambió de pestaña mientras cargaba
+      host.innerHTML = "";
+      const dpr = window.devicePixelRatio || 1;
+      const cssWidth = (host.clientWidth || 800) - 24;
+      for (let n = 1; n <= doc.numPages; n++) {
+        const page = await doc.getPage(n);
+        const v1 = page.getViewport({ scale: 1 });
+        const fit = Math.min(2, Math.max(0.4, cssWidth / v1.width));   // ajusta al ancho del panel
+        const vp = page.getViewport({ scale: fit * dpr });
+        const canvas = document.createElement("canvas");
+        canvas.className = "pdf-page";
+        canvas.width = Math.ceil(vp.width); canvas.height = Math.ceil(vp.height);
+        canvas.style.width = Math.floor(vp.width / dpr) + "px";
+        canvas.style.height = Math.floor(vp.height / dpr) + "px";
+        host.appendChild(canvas);
+        await page.render({ canvasContext: canvas.getContext("2d"), viewport: vp }).promise;
+        if (host.dataset.tab !== tab.id) return;   // el usuario cambió de pestaña: corta el pintado
+      }
+      $("viewer-meta").textContent = (tab.size ? humanSize(tab.size) + " · " : "") + tab.path;
+      fsStatus("PDF '" + tab.name + "' ✓ (" + doc.numPages + " pág.)", "ok");
+    } catch (e) {
+      host.dataset.tab = "";
+      fsStatus("No se pudo abrir el PDF: " + (e && e.message ? e.message : "error"), "err");
+    }
+  }
+
   // API pública: abre un archivo de texto en una pestaña nueva (o activa la
   // existente si ya está abierto ese mismo path).
   async function viewerOpenPath(path, name, sizeHint) {
@@ -2379,6 +2510,16 @@
       else { _activeTab = id; _ensureViewerVisible(); _renderViewer(_viewerTabs.get(id)); _updateTabsUI(); }
       fsStatus("Imagen '" + name + "' ✓", "ok");
       return;
+    }
+    // PDF: se pinta en <canvas> con pdf.js (no iframe). `url` (inline) se guarda solo
+    // para el botón ↗ "abrir en navegador" (navegación de pestaña, sin framing).
+    if (_isPdfName(name)) {
+      const id = "v" + (++_tabSeq);
+      const tab = { id, name, path, kind: "pdf", url: _fileURL(path) + "&inline=1", pdfDoc: null, size: sizeHint || 0, content: "" };
+      _viewerTabs.set(id, tab);
+      if (_splitActive()) { _routeFileToFocus(id); }
+      else { _activeTab = id; _ensureViewerVisible(); _renderViewer(tab); _updateTabsUI(); }
+      return;   // _renderViewer dispara el pintado del PDF
     }
     if (!_isProbablyTextName(name)) {
       // Dejamos que el backend sea quien diga la última palabra, pero avisamos
@@ -2428,6 +2569,11 @@
     if (t.kind === "image") {   // recargar imagen = volver a pedir los bytes (cache-bust)
       const img = $("viewer-img-el"); if (img) img.src = _fileURL(t.path) + "&_=" + Date.now();
       fsStatus("Imagen recargada ✓", "ok"); return;
+    }
+    if (t.kind === "pdf") {     // recargar PDF = soltar el doc cacheado y volver a pintar
+      if (t.pdfDoc) { try { t.pdfDoc.destroy(); } catch (_) {} t.pdfDoc = null; }
+      const host = $("viewer-pdf"); if (host) host.dataset.tab = "";
+      _renderPdf(t); return;
     }
     if (_editing) {
       // No pisamos cambios sin guardar a la brava: que el usuario decida.
@@ -2948,20 +3094,31 @@
     const a = document.createElement("a"); a.href = url; a.download = "";
     document.body.appendChild(a); a.click(); a.remove();
   }
-  async function fsUploadFiles(files) {
-    if (!files || !files.length) return;
-    for (const f of files) {
-      fsStatus("Subiendo " + f.name + "…");
+  async function fsUploadItems(items) {
+    if (!items || !items.length) return;
+    let done = 0;
+    for (const { file, relpath } of items) {
+      const label = relpath || file.name;
+      fsStatus("Subiendo " + label + "… (" + (done + 1) + "/" + items.length + ")");
       const fd = new FormData();
-      fd.append("fsid", fsid); fd.append("dir", fsPath); fd.append("file", f, f.name);
+      fd.append("fsid", fsid); fd.append("dir", fsPath); fd.append("file", file, file.name);
+      if (relpath && relpath !== file.name) fd.append("relpath", relpath);
       try {
         const res = await fetch("/files/upload", { method: "POST", headers: fsHeaders(), body: fd });
         const d = await res.json().catch(() => ({}));
-        if (!res.ok) { fsStatus(d.detail || ("Error al subir " + f.name), "err"); return; }
-      } catch (_) { fsStatus("Error de red al subir " + f.name, "err"); return; }
+        if (!res.ok) { fsStatus(d.detail || ("Error al subir " + label), "err"); return; }
+      } catch (_) { fsStatus("Error de red al subir " + label, "err"); return; }
+      done++;
     }
-    fsStatus("Subida completada ✓", "ok");
+    fsStatus("Subida completada ✓ (" + done + ")", "ok");
     fsList(fsPath);
+  }
+  // FileList (de un <input>) → items con su ruta relativa (webkitRelativePath si
+  // viene de un input webkitdirectory; si no, el nombre suelto).
+  function fsUploadFiles(files) {
+    const items = [];
+    for (const f of (files || [])) items.push({ file: f, relpath: f.webkitRelativePath || f.name });
+    return fsUploadItems(items);
   }
   async function fsMkdir() {
     const name = await uiPrompt({
@@ -3069,6 +3226,8 @@
     const mk = $("files-mkdir"); if (mk) mk.addEventListener("click", fsMkdir);
     const ub = $("files-upload-btn"); if (ub) ub.addEventListener("click", () => $("files-input").click());
     const inp = $("files-input"); if (inp) inp.addEventListener("change", (e) => { fsUploadFiles(e.target.files); e.target.value = ""; });
+    const ud = $("files-upload-dir-btn"); if (ud) ud.addEventListener("click", () => $("files-dir-input").click());
+    const dinp = $("files-dir-input"); if (dinp) dinp.addEventListener("change", (e) => { fsUploadFiles(e.target.files); e.target.value = ""; });
     // Cerrar con Escape
     document.addEventListener("keydown", (e) => { if (e.key === "Escape" && fsIsOpen()) fsClose(); });
     // Arrastrar y soltar archivos en el panel
@@ -3076,10 +3235,10 @@
     if (side) {
       side.addEventListener("dragover", (e) => { e.preventDefault(); side.classList.add("dragging"); });
       side.addEventListener("dragleave", (e) => { if (e.target === side) side.classList.remove("dragging"); });
-      side.addEventListener("drop", (e) => {
+      side.addEventListener("drop", async (e) => {
         e.preventDefault(); side.classList.remove("dragging");
-        const files = (e.dataTransfer && e.dataTransfer.files) || [];
-        if (files.length) fsUploadFiles(files);
+        const items = await collectDropItems(e.dataTransfer);
+        if (items.length) fsUploadItems(items);
       });
     }
   }

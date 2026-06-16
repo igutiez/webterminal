@@ -709,6 +709,9 @@ mark.find-current { background: var(--accent); color: var(--accent-ink); }
 /* Panel de Preview (iframe de la webapp local). */
 .viewer-iframe { flex: 1 1 auto; min-height: 0; min-width: 0; border: 0; width: 100%; background: #fff; }
 .viewer-iframe[hidden] { display: none !important; }
+.viewer-pdf { flex: 1 1 auto; min-height: 0; min-width: 0; width: 100%; overflow: auto; background: #525659; padding: 12px; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.viewer-pdf[hidden] { display: none !important; }
+.viewer-pdf .pdf-page { background: #fff; box-shadow: 0 2px 12px rgba(0,0,0,.5); max-width: 100%; height: auto; }
 .viewer-pre.wrap .viewer-gutter { white-space: pre; } /* gutter siempre en pre para alinear */
 .viewer-pre::-webkit-scrollbar { width: 10px; height: 10px; }
 .viewer-pre::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
