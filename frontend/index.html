@@ -244,6 +244,7 @@
                 <button id="viewer-openext" class="vbtn" title="Abrir en una pestaña del navegador" hidden><svg class="ic"><use href="#ic-external-link"/></svg></button>
                 <button id="viewer-download" class="vbtn" title="Descargar este archivo"><svg class="ic"><use href="#ic-download"/></svg></button>
                 <button id="viewer-md-btn" class="vbtn" title="Ver Markdown formateado / texto plano" hidden>MD</button>
+                <button id="viewer-html-btn" class="vbtn" title="Renderizar la página / ver código fuente" hidden>HTML</button>
                 <button id="viewer-font-dec" class="vbtn" title="Reducir el tamaño del texto">A−</button>
                 <button id="viewer-font-inc" class="vbtn" title="Aumentar el tamaño del texto">A+</button>
                 <button id="viewer-edit" class="vbtn" title="Editar este archivo"><svg class="ic"><use href="#ic-pencil"/></svg></button>
@@ -264,6 +265,7 @@
             <div id="viewer-md" class="viewer-md" hidden></div>
             <div id="viewer-img" class="viewer-img" hidden><img id="viewer-img-el" alt="" /></div>
             <iframe id="viewer-iframe" class="viewer-iframe" hidden referrerpolicy="no-referrer"></iframe>
+            <iframe id="viewer-html" class="viewer-html" hidden referrerpolicy="no-referrer" sandbox="allow-scripts allow-popups allow-forms allow-modals"></iframe>
             <div id="viewer-pdf" class="viewer-pdf" hidden></div>
             <div id="viewer-edit-wrap" class="viewer-edit-wrap" hidden>
               <pre id="viewer-edit-hl" class="viewer-edit-hl" aria-hidden="true"></pre>
@@ -421,6 +423,6 @@
 
   <script src="highlight.min.js?v=1"></script>
   <script src="pdf.min.js?v=1"></script>
-  <script src="app.js?v=125"></script>
+  <script src="app.js?v=126"></script>
 </body>
 </html>

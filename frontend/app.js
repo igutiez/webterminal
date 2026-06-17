@@ -1432,6 +1432,18 @@
   let _mdRendered = true;   // por defecto, los .md se ven formateados
   try { if (localStorage.getItem("wt_viewer_md") === "0") _mdRendered = false; } catch (_) {}
   function _isMd(tab) { return !!tab && tab.kind !== "image" && /\.(md|markdown|mdown|mkd)$/i.test(tab.name || ""); }
+  let _htmlRendered = true;   // por defecto, los .html se ven renderizados
+  try { if (localStorage.getItem("wt_viewer_html") === "0") _htmlRendered = false; } catch (_) {}
+  function _isHtml(tab) { return !!tab && tab.kind !== "image" && /\.(html?|xhtml)$/i.test(tab.name || ""); }
+  // Renderiza la página en un <iframe sandbox> vía srcdoc: el HTML va inline (sin
+  // petición HTTP), así esquiva el bloqueo de iframes del proxy (Cloudflare Access).
+  // Sandbox sin allow-same-origin: la página corre aislada y no toca el webterminal.
+  function _setHtmlSrcdoc(frame, tab) {
+    const key = tab.id + ":" + (tab.mtime || 0) + ":" + ((tab.content || "").length);
+    if (frame.dataset.key === key) return;   // mismo contenido: no recargar (evita parpadeo)
+    frame.srcdoc = tab.content || "<!doctype html><meta charset=\"utf-8\">";
+    frame.dataset.key = key;
+  }
   const _IMG_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "avif", "ico"]);
   function _isImageName(name) { const i = (name || "").lastIndexOf("."); return i >= 0 && _IMG_EXTS.has(name.slice(i + 1).toLowerCase()); }
   function _isPdfName(name) { return /\.pdf$/i.test(name || ""); }
@@ -1596,6 +1608,7 @@
   // y la preferencia _mdRendered. El botón MD solo aparece en archivos .md.
   function _applyViewMode(tab) {
     const pre = $("viewer-pre"), md = $("viewer-md"), btn = $("viewer-md-btn"), imgp = $("viewer-img"), ifr = $("viewer-iframe"), pdf = $("viewer-pdf");
+    const htmlf = $("viewer-html"), htmlBtn = $("viewer-html-btn");
     if (_editing) return;   // editando manda el textarea; no tocamos paneles
     _applyToolbarForTab(tab);
     if (tab && tab.kind === "preview") {   // preview: solo el iframe
@@ -1603,8 +1616,10 @@
       if (md) md.hidden = true;
       if (imgp) imgp.hidden = true;
       if (pdf) pdf.hidden = true;
+      if (htmlf) htmlf.hidden = true;
       if (ifr) ifr.hidden = false;
       if (btn) btn.hidden = true;
+      if (htmlBtn) htmlBtn.hidden = true;
       return;
     }
     if (ifr) ifr.hidden = true;
@@ -1612,30 +1627,43 @@
       if (pre) pre.hidden = true;
       if (md) md.hidden = true;
       if (pdf) pdf.hidden = true;
+      if (htmlf) htmlf.hidden = true;
       if (imgp) imgp.hidden = false;
       if (btn) btn.hidden = true;
+      if (htmlBtn) htmlBtn.hidden = true;
       return;
     }
     if (tab && tab.kind === "pdf") {      // PDF: solo el <iframe> del visor nativo
       if (pre) pre.hidden = true;
       if (md) md.hidden = true;
       if (imgp) imgp.hidden = true;
+      if (htmlf) htmlf.hidden = true;
       if (pdf) pdf.hidden = false;
       if (btn) btn.hidden = true;
+      if (htmlBtn) htmlBtn.hidden = true;
       return;
     }
     if (pdf) pdf.hidden = true;
     if (imgp) imgp.hidden = true;
-    const isMd = _isMd(tab);
+    const isMd = _isMd(tab), isHtml = _isHtml(tab);
     if (btn) btn.hidden = !isMd;
-    if (isMd && _mdRendered) {
+    if (htmlBtn) htmlBtn.hidden = !isHtml;
+    if (isHtml && _htmlRendered) {                 // .html renderizado: iframe sandbox (srcdoc)
+      if (htmlf) { _setHtmlSrcdoc(htmlf, tab); htmlf.hidden = false; }
+      if (pre) pre.hidden = true;
+      if (md) md.hidden = true;
+      if (htmlBtn) { htmlBtn.classList.add("active"); htmlBtn.textContent = "</>"; htmlBtn.title = "Ver código fuente"; }
+    } else if (isMd && _mdRendered) {
+      if (htmlf) htmlf.hidden = true;
       if (md) { md.innerHTML = _renderMarkdown(tab.content, tab); md.hidden = false; }
       if (pre) pre.hidden = true;
       if (btn) { btn.classList.add("active"); btn.textContent = "TXT"; btn.title = "Ver texto plano"; }
-    } else {
+    } else {                                        // texto plano (o fuente de .md/.html)
+      if (htmlf) htmlf.hidden = true;
       if (md) md.hidden = true;
       if (pre) pre.hidden = false;
       if (btn) { btn.classList.remove("active"); btn.textContent = "MD"; btn.title = "Ver Markdown formateado"; }
+      if (htmlBtn) { htmlBtn.classList.remove("active"); htmlBtn.textContent = "HTML"; htmlBtn.title = "Renderizar la página"; }
     }
   }
   function _toggleMd() {
@@ -1643,6 +1671,13 @@
     if (!_isMd(tab)) return;
     _mdRendered = !_mdRendered;
     try { localStorage.setItem("wt_viewer_md", _mdRendered ? "1" : "0"); } catch (_) {}
+    _applyViewMode(tab);
+  }
+  function _toggleHtml() {
+    const tab = _viewerTabs.get(_activeTab);
+    if (!_isHtml(tab)) return;
+    _htmlRendered = !_htmlRendered;
+    try { localStorage.setItem("wt_viewer_html", _htmlRendered ? "1" : "0"); } catch (_) {}
     _applyViewMode(tab);
   }
 
@@ -1656,9 +1691,10 @@
   }
   function _openFind() {
     const tab = _viewerTabs.get(_activeTab);
-    if (!tab || _activeTab === _TAB_TERM || _editing || tab.kind === "image" || tab.kind === "preview") return;
-    const pre = $("viewer-pre"), md = $("viewer-md");
+    if (!tab || _activeTab === _TAB_TERM || _editing || tab.kind === "image" || tab.kind === "preview" || tab.kind === "pdf") return;
+    const pre = $("viewer-pre"), md = $("viewer-md"), htmlf = $("viewer-html");
     if (md) md.hidden = true;
+    if (htmlf) htmlf.hidden = true;
     if (pre) pre.hidden = false;       // la búsqueda necesita el texto plano
     _findActive = true;
     const bar = $("viewer-find"); if (bar) bar.hidden = false;
@@ -2656,6 +2692,7 @@
     _applyViewerFont(); _syncEditorHL(); _syncEditorScroll();
     const pre = $("viewer-pre"); if (pre) pre.hidden = true;
     const md = $("viewer-md"); if (md) md.hidden = true;   // se edita siempre el texto crudo
+    const htmlf = $("viewer-html"); if (htmlf) htmlf.hidden = true;
     const sv = $("viewer-save"); if (sv) sv.hidden = false;
     const eb = $("viewer-edit"); if (eb) { eb.classList.add("active"); eb.title = "Cancelar edición"; }
     if (ta) ta.focus();
@@ -2772,6 +2809,8 @@
     }
     const mdBtn = $("viewer-md-btn");
     if (mdBtn) mdBtn.addEventListener("click", _toggleMd);
+    const htmlBtn = $("viewer-html-btn");
+    if (htmlBtn) htmlBtn.addEventListener("click", _toggleHtml);
     const fdec = $("viewer-font-dec");
     if (fdec) fdec.addEventListener("click", () => _bumpFont(-1));
     const finc = $("viewer-font-inc");
