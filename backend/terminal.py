@@ -5,6 +5,7 @@ paramiko authenticates with the *system* username+password of the logged-in user
 the process owner (www-data) is irrelevant to SSH authentication.
 """
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -14,6 +15,156 @@ import shlex
 import paramiko
 
 log = logging.getLogger("messorterminal.terminal")
+
+# Helper que corre POR SSH como el usuario (sus credenciales viven en su HOME, que
+# www-data no puede leer). Detecta qué IA está activa en el terminal y devuelve su
+# uso: ventana 5h/semanal de Anthropic (lo de /usage) y tokens de la sesión local
+# (universal: Claude Code y kimi a secas registran "usage" por mensaje en sus logs).
+_USAGE_PY = r'''
+import json, os, glob, sys, urllib.request
+SESSION = sys.argv[1] if len(sys.argv) > 1 else ""
+HOME = os.path.expanduser("~")
+
+def comm_of(pid):
+    try: return open("/proc/%d/comm" % pid).read().strip()
+    except Exception: return ""
+def _stat(pid):
+    try:
+        s = open("/proc/%d/stat" % pid).read(); rp = s.rfind(")")
+        return s[rp + 2:].split()
+    except Exception: return None
+def ppid_of(pid):
+    f = _stat(pid)
+    try: return int(f[1])
+    except Exception: return -1
+def start_of(pid):
+    f = _stat(pid)
+    try: return int(f[19])
+    except Exception: return 0
+def environ_of(pid):
+    d = {}
+    try:
+        for kv in open("/proc/%d/environ" % pid, "rb").read().split(b"\x00"):
+            if b"=" in kv:
+                k, v = kv.split(b"=", 1); d[k.decode("utf-8", "replace")] = v.decode("utf-8", "replace")
+    except Exception: pass
+    return d
+
+myuid = os.getuid()
+cands = []
+for p in glob.glob("/proc/[0-9]*"):
+    try:
+        pid = int(p.rsplit("/", 1)[1])
+        if os.stat(p).st_uid != myuid: continue
+        if comm_of(pid) in ("claude", "kimi"): cands.append(pid)
+    except Exception: pass
+
+def session_pidset(sess):
+    try:
+        import subprocess
+        out = subprocess.run(["tmux", "list-panes", "-t", sess, "-F", "#{pane_pid}"],
+                             capture_output=True, text=True, timeout=4).stdout
+        roots = [int(x) for x in out.split() if x.strip().isdigit()]
+    except Exception: roots = []
+    if not roots: return set()
+    kids = {}
+    for p in glob.glob("/proc/[0-9]*"):
+        try:
+            pid = int(p.rsplit("/", 1)[1]); kids.setdefault(ppid_of(pid), []).append(pid)
+        except Exception: pass
+    seen = set(); stack = list(roots)
+    while stack:
+        x = stack.pop()
+        if x in seen: continue
+        seen.add(x); stack += kids.get(x, [])
+    return seen
+
+chosen = None
+if SESSION:
+    sp = session_pidset(SESSION)
+    inb = [pid for pid in cands if pid in sp]
+    if inb: chosen = max(inb, key=start_of)
+if chosen is None and cands: chosen = max(cands, key=start_of)
+
+def newest(pattern):
+    fs = glob.glob(pattern, recursive=True)
+    return max(fs, key=os.path.getmtime) if fs else None
+
+def claude_tokens():
+    f = newest(HOME + "/.claude/projects/**/*.jsonl")
+    if not f: return None
+    ti = to = cr = cc = 0
+    try:
+        for line in open(f, encoding="utf-8", errors="replace"):
+            if '"usage"' not in line: continue
+            try: obj = json.loads(line)
+            except Exception: continue
+            u = (obj.get("message") or {}).get("usage") or obj.get("usage")
+            if not isinstance(u, dict): continue
+            ti += u.get("input_tokens") or 0; to += u.get("output_tokens") or 0
+            cr += u.get("cache_read_input_tokens") or 0; cc += u.get("cache_creation_input_tokens") or 0
+    except Exception: pass
+    return {"input": ti, "output": to, "cache_read": cr, "cache_creation": cc, "total": ti + to + cr + cc}
+
+def kimi_tokens():
+    f = newest(HOME + "/.kimi-code/sessions/**/wire.jsonl")
+    if not f: return None
+    acc = [0, 0, 0, 0]
+    def walk(o):
+        if isinstance(o, dict):
+            if "output" in o and ("inputOther" in o or "inputCacheRead" in o):
+                acc[0] += o.get("inputOther") or 0; acc[1] += o.get("output") or 0
+                acc[2] += o.get("inputCacheRead") or 0; acc[3] += o.get("inputCacheCreation") or 0
+            else:
+                for v in o.values(): walk(v)
+        elif isinstance(o, list):
+            for v in o: walk(v)
+    try:
+        for line in open(f, encoding="utf-8", errors="replace"):
+            if '"usage"' not in line: continue
+            try: walk(json.loads(line))
+            except Exception: continue
+    except Exception: pass
+    return {"input": acc[0], "output": acc[1], "cache_read": acc[2], "cache_creation": acc[3], "total": sum(acc)}
+
+def anthropic_windows():
+    try:
+        cred = json.load(open(HOME + "/.claude/.credentials.json"))
+        tok = cred["claudeAiOauth"]["accessToken"]
+    except Exception: return None
+    req = urllib.request.Request("https://api.anthropic.com/api/oauth/usage",
+        headers={"Authorization": "Bearer " + tok, "anthropic-beta": "oauth-2025-04-20",
+                 "anthropic-version": "2023-06-01", "User-Agent": "claude-cli"})
+    try: d = json.load(urllib.request.urlopen(req, timeout=10))
+    except Exception: return None
+    out = {}
+    for k in ("five_hour", "seven_day"):
+        w = d.get(k)
+        if isinstance(w, dict): out[k] = {"utilization": w.get("utilization"), "resets_at": w.get("resets_at")}
+    eu = d.get("extra_usage")
+    if isinstance(eu, dict) and eu.get("is_enabled"):
+        out["extra"] = {"utilization": eu.get("utilization"), "currency": eu.get("currency")}
+    return out or None
+
+res = {"active": False}
+if chosen:
+    c = comm_of(chosen); env = environ_of(chosen); res["active"] = True
+    if c == "kimi":
+        res["provider"] = "kimi"; res["model"] = "kimi"; res["tokens"] = kimi_tokens()
+    else:
+        base = (env.get("ANTHROPIC_BASE_URL") or "").lower(); model = env.get("ANTHROPIC_MODEL") or ""
+        if not base or "anthropic.com" in base:
+            res["provider"] = "claude"; res["model"] = model or "claude"; res["windows"] = anthropic_windows()
+        else:
+            if "kimi" in base: res["provider"] = "claude-kimi"
+            elif "deepseek" in base: res["provider"] = "deepseek"
+            elif "minimax" in base: res["provider"] = "minimax"
+            elif "nvidia" in base or "nim" in base: res["provider"] = "nvidia"
+            else: res["provider"] = "custom"
+            res["model"] = model or res["provider"]
+        res["tokens"] = claude_tokens()
+print(json.dumps(res))
+'''
 
 SSH_HOST = os.environ.get("WEBTERMINAL_SSH_HOST", "127.0.0.1")
 SSH_PORT = int(os.environ.get("WEBTERMINAL_SSH_PORT", "22"))   # p. ej. 20776 si tu sshd no escucha en 22
@@ -372,6 +523,22 @@ class SSHTerminal:
         cmd = "tmux " + " ".join(shlex.quote(a) for a in args)
         _in, out, _err = self.client.exec_command(cmd, timeout=5)
         return out.read().decode("utf-8", "replace")
+
+    def usage_report(self, session: str = "") -> dict:
+        """Corre el helper de uso por SSH (como el usuario) y devuelve su JSON.
+        `session` es la sesión tmux activa, para acotar la IA detectada al panel
+        correcto. Nunca lanza: ante cualquier fallo devuelve {'active': False}."""
+        if self.client is None:
+            return {"active": False}
+        b64 = base64.b64encode(_USAGE_PY.encode("utf-8")).decode("ascii")
+        cmd = "echo %s | base64 -d | python3 - %s" % (b64, shlex.quote(session or ""))
+        try:
+            _in, out, _err = self.client.exec_command(cmd, timeout=14)
+            data = out.read().decode("utf-8", "replace").strip()
+            return json.loads(data) if data else {"active": False}
+        except Exception as exc:  # noqa: BLE001
+            log.info("usage_report fallo: %s", exc)
+            return {"active": False}
 
     def _list_sessions(self) -> list:
         """Lista SOLO las sesiones de este usuario (por prefijo), cada una con su

@@ -959,6 +959,15 @@
     const findBtn = $("find-btn");
     if (findBtn) findBtn.addEventListener("click", termFindOpen);
 
+    // --- Chip de uso de la IA: clic abre/cierra el detalle; clic fuera / Esc cierra ---
+    const usageChip = $("usage-chip");
+    if (usageChip) usageChip.addEventListener("click", (e) => { e.stopPropagation(); _usageTogglePop(); });
+    document.addEventListener("click", (e) => {
+      const pop = $("usage-pop");
+      if (pop && !pop.hidden && !pop.contains(e.target) && e.target !== usageChip) _usageHidePop();
+    });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") _usageHidePop(); });
+
     // --- Selector de tema (look&feel) ---
     const themeBtn = $("theme-btn");
     if (themeBtn) themeBtn.addEventListener("click", (e) => { e.stopPropagation(); toggleThemePop(); });
@@ -2013,6 +2022,7 @@
     _markCurrent(label);
     if (term) try { term.reset(); } catch (_) {}
     reconnectNow();
+    setTimeout(_usageTick, 800);   // refresca el chip con la IA de la nueva sesión
   }
   function _applyFocusOutline() {
     const focusEl = _splitActive() ? _slotEl(_slots[_focusPane]) : null;
@@ -3252,6 +3262,125 @@
     term.options.fontSize = s; $("font-size").textContent = String(s); fitAddon.fit(); sendResize();
   }
 
+  // ---------- Chip de uso de la IA activa (junto a "MessorTerminal") ----------
+  // Muestra, para la IA que corre en el terminal: ventana 5h/semanal (Claude real,
+  // lo de /usage) o tokens de la sesión (resto de modelos). Pregunta a /usage cada
+  // 60 s y al cambiar de sesión; el detalle se abre al pulsar el chip.
+  let _usageTimer = null, _usageData = null;
+  function _fmtTok(n) {
+    n = n || 0;
+    if (n >= 1e6) return (n / 1e6).toFixed(n >= 1e7 ? 0 : 1).replace(".", ",") + "M";
+    if (n >= 1e3) return Math.round(n / 1e3) + "k";
+    return String(n);
+  }
+  function _usageMaxUtil(d) {
+    let m = 0;
+    if (d && d.windows) ["five_hour", "seven_day"].forEach((k) => {
+      const w = d.windows[k]; if (w && w.utilization != null) m = Math.max(m, w.utilization);
+    });
+    return m;
+  }
+  function _resetIn(iso) {
+    if (!iso) return "";
+    const ms = new Date(iso).getTime() - Date.now();
+    if (!(ms > 0)) return "ahora";
+    const h = Math.floor(ms / 3600000), m = Math.round((ms % 3600000) / 60000);
+    return h >= 24 ? Math.round(h / 24) + "d" : (h ? h + "h " : "") + m + "m";
+  }
+  function _prettyModel(d) {
+    let s = d.model || d.provider || "ia";
+    s = s.replace(/-\d{6,}$/, "").replace(/^claude-?/, "") || d.provider || "ia";
+    return s.length > 22 ? s.slice(0, 21) + "…" : s;
+  }
+  function _renderUsage(d) {
+    _usageData = d;
+    const chip = $("usage-chip"); if (!chip) return;
+    if (!d || !d.active) { chip.hidden = true; _usageHidePop(); return; }
+    let txt;
+    if (d.windows && (d.windows.five_hour || d.windows.seven_day)) {
+      const f = d.windows.five_hour, s = d.windows.seven_day, parts = [];
+      if (f && f.utilization != null) parts.push("5h " + Math.round(f.utilization) + "%");
+      if (s && s.utilization != null) parts.push("sem " + Math.round(s.utilization) + "%");
+      txt = parts.join(" · ");
+    } else if (d.tokens) {
+      txt = _fmtTok((d.tokens.input || 0) + (d.tokens.output || 0)) + " tok";
+    } else {
+      txt = "uso n/d";
+    }
+    const mu = _usageMaxUtil(d);
+    chip.className = "usage-chip" + (mu >= 85 ? " sev-high" : mu >= 60 ? " sev-warn" : "");
+    chip.replaceChildren();
+    const dot = document.createElement("span"); dot.className = "um-dot"; chip.appendChild(dot);
+    chip.appendChild(document.createTextNode(" " + _prettyModel(d) + " · " + txt));
+    chip.hidden = false;
+  }
+  function _umRow(parent, label, valTxt, pct, sev) {
+    const row = document.createElement("div"); row.className = "um-row";
+    const l = document.createElement("span"); l.textContent = label;
+    const v = document.createElement("span"); v.textContent = valTxt; v.className = "um-val";
+    row.appendChild(l); row.appendChild(v); parent.appendChild(row);
+    if (pct != null) {
+      const bar = document.createElement("div"); bar.className = "um-bar" + (sev ? " " + sev : "");
+      const i = document.createElement("i"); i.style.width = Math.max(2, Math.min(100, pct)) + "%";
+      bar.appendChild(i); parent.appendChild(bar);
+    }
+  }
+  function _usageRenderPop(pop, d) {
+    pop.replaceChildren();
+    const h = document.createElement("h4");
+    h.textContent = (d.model || d.provider || "IA") + (d.provider && d.provider !== d.model ? " · " + d.provider : "");
+    pop.appendChild(h);
+    if (d.windows && (d.windows.five_hour || d.windows.seven_day)) {
+      const w = d.windows;
+      [["five_hour", "Ventana 5 h"], ["seven_day", "Límite semanal"]].forEach(([k, lbl]) => {
+        const x = w[k]; if (!x || x.utilization == null) return;
+        const sev = x.utilization >= 85 ? "sev-high" : x.utilization >= 60 ? "sev-warn" : "";
+        _umRow(pop, lbl, Math.round(x.utilization) + "%", x.utilization, sev);
+        if (x.resets_at) { const s = document.createElement("div"); s.className = "um-sub"; s.textContent = "resetea en " + _resetIn(x.resets_at); pop.appendChild(s); }
+      });
+      if (w.extra && w.extra.utilization != null) _umRow(pop, "Créditos extra", Math.round(w.extra.utilization) + "% " + (w.extra.currency || ""), w.extra.utilization);
+    } else if (d.windows === null && d.provider === "claude") {
+      const s = document.createElement("div"); s.className = "um-sub"; s.textContent = "No se pudo leer la ventana (token caducado o sin red)."; pop.appendChild(s);
+    }
+    if (d.tokens) {
+      const t = d.tokens;
+      const sep = document.createElement("div"); sep.className = "um-sub um-tok-h"; sep.textContent = "Tokens de la sesión"; pop.appendChild(sep);
+      _umRow(pop, "Entrada", _fmtTok(t.input));
+      _umRow(pop, "Salida", _fmtTok(t.output));
+      if (t.cache_read) _umRow(pop, "Caché (lectura)", _fmtTok(t.cache_read));
+      if (t.cache_creation) _umRow(pop, "Caché (creación)", _fmtTok(t.cache_creation));
+    }
+    if (!d.windows && !d.tokens) {
+      const s = document.createElement("div"); s.className = "um-sub"; s.textContent = "Este modelo no expone uso por API."; pop.appendChild(s);
+    }
+  }
+  function _usageHidePop() { const p = $("usage-pop"); if (p) p.hidden = true; }
+  function _usageTogglePop() {
+    const pop = $("usage-pop"), chip = $("usage-chip");
+    if (!pop || !chip) return;
+    if (!pop.hidden) { _usageHidePop(); return; }
+    if (!_usageData || !_usageData.active) return;
+    _usageRenderPop(pop, _usageData);
+    pop.hidden = false;
+    const r = chip.getBoundingClientRect();
+    pop.style.top = (r.bottom + 6) + "px";
+    pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - pop.offsetWidth - 8)) + "px";
+  }
+  async function _usageTick() {
+    if (!fsid || !jwt) return;
+    try {
+      const url = "/usage?fsid=" + encodeURIComponent(fsid) + "&session=" + encodeURIComponent(currentSession || "");
+      const res = await fetch(url, { headers: fsHeaders() });
+      if (!res.ok) return;
+      const d = await res.json().catch(() => null);
+      if (d) _renderUsage(d);
+    } catch (_) {}
+  }
+  function _usageStart() {
+    _usageTick();
+    if (!_usageTimer) _usageTimer = setInterval(_usageTick, 60000);
+  }
+
   function connectWS() {
     setStatus(reconnectAttempts ? "reconnecting" : "disconnected", reconnectAttempts ? "reconectando…" : "conectando…");
     const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -3272,7 +3401,7 @@
           try {
             const m = JSON.parse(ev.data);
             if (m && m.type === "tmux-sessions") { renderSessions(m.sessions || []); return; }
-            if (m && m.type === "fsid") { fsid = m.fsid; requestSessions(); _restoreOpenTabs(); return; }
+            if (m && m.type === "fsid") { fsid = m.fsid; requestSessions(); _restoreOpenTabs(); _usageStart(); return; }
             if (m && m.type === "remote") { setMainAway(!!m.on, m.host || null); return; }
             if (m && m.type === "tmux-clipboard") { navigator.clipboard.writeText(m.text || "").catch(() => {}); return; }
           } catch (_) {}

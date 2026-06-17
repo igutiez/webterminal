@@ -161,12 +161,13 @@
 
   <!-- TERMINAL -->
   <div id="terminal-screen" class="screen" style="display:none;">
+    <div id="usage-pop" class="usage-pop" hidden></div>
     <div id="topbar">
       <div class="left">
         <span id="status-dot" class="dot dot-red"></span>
         <span id="status-text">desconectado</span>
       </div>
-      <div class="center">MessorTerminal</div>
+      <div class="center"><span class="brand-name">MessorTerminal</span><button id="usage-chip" class="usage-chip" title="Uso de la IA activa (pulsa para el detalle)" hidden></button></div>
       <div class="right">
         <button id="find-btn" title="Buscar en el terminal (Ctrl+Mayús+F)"><svg class="ic"><use href="#ic-search"/></svg></button>
         <button id="files-btn" title="Explorador de archivos (subir / descargar)"><svg class="ic"><use href="#ic-folder"/></svg></button>
@@ -420,6 +421,6 @@
 
   <script src="highlight.min.js?v=1"></script>
   <script src="pdf.min.js?v=1"></script>
-  <script src="app.js?v=124"></script>
+  <script src="app.js?v=125"></script>
 </body>
 </html>

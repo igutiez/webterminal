@@ -118,8 +118,38 @@ html, body {
   padding: 0 12px; background: var(--panel); border-bottom: 1px solid var(--border); font-size: 12px; user-select: none;
 }
 #topbar .left { display: flex; align-items: center; gap: 8px; }
-#topbar .center { color: var(--muted); letter-spacing: .22em; font-weight: 600; font-size: 10.5px; text-transform: uppercase; }
+#topbar .center { display: flex; align-items: center; gap: 11px; }
+#topbar .center .brand-name { color: var(--muted); letter-spacing: .22em; font-weight: 600; font-size: 10.5px; text-transform: uppercase; }
 #topbar .right { display: flex; align-items: center; gap: 8px; }
+
+/* Chip de uso de la IA activa (pastilla junto al nombre) */
+#topbar .usage-chip {
+  min-width: 0; height: 22px; padding: 0 10px; border-radius: 999px;
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0; text-transform: none;
+  color: var(--muted); background: var(--panel-2); border: 1px solid var(--border);
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; line-height: 1;
+}
+#topbar .usage-chip:hover { color: var(--text); border-color: var(--accent); background: rgba(var(--accent-rgb), .08); }
+#topbar .usage-chip[hidden] { display: none; }
+.usage-chip .um-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); flex: 0 0 auto; }
+.usage-chip.sev-warn .um-dot { background: var(--yellow); }
+.usage-chip.sev-high .um-dot { background: var(--red); }
+.usage-pop {
+  position: fixed; z-index: 70; min-width: 230px; max-width: 320px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px 14px; box-shadow: 0 10px 34px rgba(0,0,0,.5); color: var(--text);
+  font-size: 12.5px; font-family: var(--font-mono);
+}
+.usage-pop[hidden] { display: none; }
+.usage-pop h4 { margin: 0 0 9px; font-size: 11px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .08em; }
+.usage-pop .um-row { display: flex; justify-content: space-between; gap: 14px; margin: 6px 0 0; }
+.usage-pop .um-val { color: var(--muted); }
+.usage-pop .um-bar { height: 5px; border-radius: 3px; background: var(--panel-2); margin-top: 4px; overflow: hidden; }
+.usage-pop .um-bar > i { display: block; height: 100%; background: var(--green); }
+.usage-pop .um-bar.sev-warn > i { background: var(--yellow); }
+.usage-pop .um-bar.sev-high > i { background: var(--red); }
+.usage-pop .um-sub { color: var(--muted); font-size: 10.5px; margin-top: 2px; opacity: .85; }
+.usage-pop .um-tok-h { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); text-transform: uppercase; letter-spacing: .06em; opacity: 1; }
 #status-text { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted); }
 
 .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }

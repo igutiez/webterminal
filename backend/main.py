@@ -627,6 +627,16 @@ async def files_list(fsid: str, path: str = "", authorization: str | None = Head
         raise HTTPException(status_code=400, detail=f"No se pudo listar: {exc}")
 
 
+@app.get("/usage")
+async def usage_report(fsid: str, session: str = "", authorization: str | None = Header(default=None)):
+    """Uso de la IA activa en el terminal: ventana 5h/semanal (Anthropic) y tokens
+    de la sesión local. Se calcula por SSH como el usuario (sus credenciales no las
+    ve www-data). Tolerante a fallos: si algo va mal devuelve {'active': False}."""
+    web_email = _bearer(authorization)
+    term = _resolve_term(fsid, web_email)
+    return await asyncio.to_thread(term.usage_report, session)
+
+
 @app.get("/files/download")
 async def files_download(fsid: str, path: str, token: str = "", inline: int = 0):
     # El token va por query para poder descargar en streaming directo en el navegador.
