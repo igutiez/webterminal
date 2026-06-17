@@ -920,7 +920,9 @@
       } catch (_) { /* sin permiso de imagen -> probamos texto */ }
       try {
         const txt = await navigator.clipboard.readText();
-        if (txt && ws && ws.readyState === WebSocket.OPEN) ws.send(txt);
+        // term.paste() respeta el bracketed paste mode (ESC[200~..ESC[201~) si la
+        // TUI lo activó (kimi-code lo exige). Si no, lo manda crudo igual que antes.
+        if (txt && ws && ws.readyState === WebSocket.OPEN) term.paste(txt);
       } catch (_) {}
     };
 
@@ -1936,7 +1938,7 @@
           e.preventDefault(); e.stopPropagation();
           const sel = t.getSelection();
           if (sel) { navigator.clipboard.writeText(sel).catch(() => {}); t.clearSelection(); }
-          else { navigator.clipboard.readText().then(txt => { if (txt && ws2 && ws2.readyState === WebSocket.OPEN) ws2.send(txt); }).catch(() => {}); }
+          else { navigator.clipboard.readText().then(txt => { if (txt && ws2 && ws2.readyState === WebSocket.OPEN) t.paste(txt); }).catch(() => {}); }
         });
       }
       t.onSelectionChange(() => {});
