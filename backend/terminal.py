@@ -187,6 +187,14 @@ RECV_CHUNK = 1024
 # sistema, p.ej. `ubuntu`, así que esto separa sesiones, NO es aislamiento de SO.)
 TMUX_ENABLED = os.environ.get("WEBTERMINAL_TMUX", "1").lower() not in ("0", "false", "no", "")
 TMUX_PREFIX = os.environ.get("WEBTERMINAL_TMUX_SESSION", "web")
+# Scrollback (history-limit) de las sesiones web. El history-limit de tmux es una
+# propiedad fija de cada VENTANA al crearse: no basta con `scrollback` de xterm
+# (irrelevante dentro de tmux, que usa pantalla alterna) ni con un set-option a
+# posteriori (solo afecta a ventanas creadas DESPUÉS). Por eso la sesión se crea
+# con una ventana de usar-y-tirar, se fija el límite y se recrea la ventana real,
+# sin tocar el history-limit GLOBAL del usuario (sus sesiones personales lo
+# conservan, p. ej. 50000).
+TMUX_HISTORY_LIMIT = int(os.environ.get("WEBTERMINAL_TMUX_HISTORY", "2000"))
 
 # "Equipación B": detectamos automáticamente si el panel activo está corriendo un
 # cliente de acceso remoto (has hecho `ssh` a otra máquina). El comando en primer
@@ -312,11 +320,28 @@ def _startup_command(session: str) -> str | None:
     if not TMUX_ENABLED:
         return None
     sess = shlex.quote(session)
+    lim = int(TMUX_HISTORY_LIMIT)
     # `exec` reemplaza el shell para que, al salir de tmux/del shell, el canal SSH
     # se cierre limpiamente. Si no hay tmux, abre un shell de login normal.
+    #
+    # Si la sesión YA existe, nos enganchamos sin más (preserva procesos vivos y su
+    # historial). Si es nueva, la creamos capada a TMUX_HISTORY_LIMIT: ventana 0 de
+    # usar-y-tirar -> set-option history-limit -> ventana real (ya capada) ->
+    # kill-window -a (mata todas menos la activa) -> attach. Los `;` van escapados
+    # para que el shell los pase a tmux como separadores de orden, no suyos.
+    create = (
+        f"exec tmux new-session -d -s {sess} \\; "
+        f"set-option -t {sess} history-limit {lim} \\; "
+        f"new-window -t {sess} \\; "
+        f"kill-window -a -t {sess} \\; "
+        f"attach-session -t {sess}"
+    )
     return (
-        f"command -v tmux >/dev/null 2>&1 && "
-        f"exec tmux new-session -A -s {sess} || exec ${{SHELL:-/bin/bash}} -l"
+        f"command -v tmux >/dev/null 2>&1 && {{ "
+        f"if tmux has-session -t {sess} 2>/dev/null; then "
+        f"exec tmux attach-session -t {sess}; "
+        f"else {create}; fi; "
+        f"}} || exec ${{SHELL:-/bin/bash}} -l"
     )
 
 
@@ -465,6 +490,13 @@ class SSHTerminal:
         if not isinstance(obj, dict):
             return False
         t = obj.get("type")
+        if t == "ping":
+            # Heartbeat de aplicación: el cliente vigila que el socket siga vivo.
+            try:
+                await self.websocket.send_text(json.dumps({"type": "pong"}))
+            except Exception:
+                pass
+            return True
         if t == "resize":
             try:
                 self.chan.resize_pty(width=int(obj["cols"]), height=int(obj["rows"]))

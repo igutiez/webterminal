@@ -8,6 +8,7 @@
 
   let term = null, fitAddon = null, searchAddon = null, ws = null;
   let reconnectAttempts = 0;
+  let hbTimer = null, hbWatchdog = null;   // heartbeat anti-"zombie" (ping/pong + watchdog)
   let autoOpenClaude = false;   // si true, ejecuta `claude` al conectar
   let currentSession = null;    // label de la sesión tmux activa (null = principal)
   let fsid = null;              // id de sesión para el explorador de archivos (SFTP)
@@ -873,7 +874,7 @@
       theme: termPalette(awayMode),
       fontFamily: "'JetBrains Mono', monospace", fontSize: 14, lineHeight: 1.0,
       scrollSensitivity: 3,
-      cursorBlink: true, cursorStyle: "block", scrollback: 10000, allowProposedApi: true,
+      cursorBlink: true, cursorStyle: "block", scrollback: 2000, allowProposedApi: true,
     });
     fitAddon = new FitAddon.FitAddon();
     searchAddon = new SearchAddon.SearchAddon();
@@ -1904,6 +1905,7 @@
   // tmux, pinta, teclea y se redimensiona. Conexión perezosa; se cierra al salir.
   const T2 = (function () {
     let t = null, fit = null, ws2 = null, sess = null, recon = 0, rTimer = null, closed = true, pending = "";
+    let hb2 = null, hbWd2 = null;   // heartbeat anti-"zombie" de la 2ª terminal
     let away = false, host = null;   // equipación B propia de esta 2ª terminal
     function repaint() { if (t) t.options.theme = termPalette(away); }
     function setRemote(on, h) {
@@ -1916,7 +1918,7 @@
       t = new Terminal({
         theme: termPalette(away),
         fontFamily: "'JetBrains Mono', monospace", fontSize: 14, lineHeight: 1.0,
-        scrollSensitivity: 3, cursorBlink: true, cursorStyle: "block", scrollback: 10000, allowProposedApi: true,
+        scrollSensitivity: 3, cursorBlink: true, cursorStyle: "block", scrollback: 2000, allowProposedApi: true,
       });
       fit = new FitAddon.FitAddon();
       t.loadAddon(fit);
@@ -1954,10 +1956,12 @@
         setRemote(false, null);   // estado remoto se re-evalúa al llegar la señal del backend
         ws2.send(JSON.stringify({ ssh_user: sshUser, password: sshPassword, session: sess || undefined }));
         fitNow(); t.focus();
+        startHb2();
         // Comando en cola (p.ej. ejecutar un archivo): se manda cuando el shell ya está.
         if (pending) { const p = pending; pending = ""; setTimeout(() => { if (ws2 && ws2.readyState === WebSocket.OPEN) ws2.send(p); }, 500); }
       };
       ws2.onmessage = (ev) => {
+        if (hbWd2) { clearTimeout(hbWd2); hbWd2 = null; }   // cualquier dato = socket vivo
         if (ev.data instanceof ArrayBuffer) { t.write(new Uint8Array(ev.data)); return; }
         if (ev.data && ev.data[0] === "{") {
           try {
@@ -1965,11 +1969,13 @@
             if (m && m.type === "remote") { setRemote(!!m.on, m.host || null); return; }
             if (m && m.type === "tmux-clipboard") { navigator.clipboard.writeText(m.text || "").catch(() => {}); return; }
             if (m && (m.type === "tmux-sessions" || m.type === "fsid")) return;
+            if (m && m.type === "pong") return;   // respuesta al heartbeat
           } catch (_) {}
         }
         t.write(ev.data);
       };
       ws2.onclose = (ev) => {
+        stopHb2();
         if (closed) return;
         const c = ev ? ev.code : 0;
         if (c === 4401 || c === 4403 || c === 4429 || c === 4400) return;   // credenciales: no reintentar
@@ -1981,6 +1987,18 @@
       if (!fit || !t) return;
       try { fit.fit(); if (ws2 && ws2.readyState === WebSocket.OPEN) ws2.send(JSON.stringify({ type: "resize", cols: t.cols, rows: t.rows })); } catch (_) {}
     }
+    // Heartbeat anti-"zombie" de la 2ª terminal: ping cada 20s; si no hay pong (ni
+    // dato) en 10s, cerramos el socket muerto y onclose dispara la reconexión.
+    function stopHb2() {
+      if (hb2) { clearInterval(hb2); hb2 = null; }
+      if (hbWd2) { clearTimeout(hbWd2); hbWd2 = null; }
+    }
+    function ping2() {
+      if (!ws2 || ws2.readyState !== WebSocket.OPEN) return;
+      try { ws2.send(JSON.stringify({ type: "ping" })); } catch (_) {}
+      if (!hbWd2) hbWd2 = setTimeout(() => { hbWd2 = null; try { ws2.close(); } catch (_) {} }, 10000);
+    }
+    function startHb2() { stopHb2(); hb2 = setInterval(ping2, 20000); }
     return {
       attach(session) {
         ensure();
@@ -1999,7 +2017,7 @@
       remoteHost() { return host; },
       // Manda datos al PTY de la 2ª terminal; si aún no está abierta, los encola.
       send(data) { if (ws2 && ws2.readyState === WebSocket.OPEN) ws2.send(data); else pending += data; },
-      close() { closed = true; clearTimeout(rTimer); pending = ""; if (ws2) { try { ws2.onclose = null; ws2.close(); } catch (_) {} ws2 = null; } sess = null; },
+      close() { closed = true; stopHb2(); clearTimeout(rTimer); pending = ""; if (ws2) { try { ws2.onclose = null; ws2.close(); } catch (_) {} ws2 = null; } sess = null; },
     };
   })();
 
@@ -3433,8 +3451,10 @@
       setMainAway(false, null);   // el backend reenvía el estado remoto de esta sesión enseguida
       ws.send(JSON.stringify({ ssh_user: sshUser, password: sshPassword, session: currentSession || undefined }));
       doFit(); term.focus();
+      startHeartbeat();
     };
     ws.onmessage = (ev) => {
+      if (hbWatchdog) { clearTimeout(hbWatchdog); hbWatchdog = null; }   // cualquier dato del server = socket vivo
       if (ev.data instanceof ArrayBuffer) { term.write(new Uint8Array(ev.data)); }
       else {
         // ¿Mensaje de control JSON (sesiones tmux / id de archivos)? Si no, es texto del PTY.
@@ -3445,6 +3465,7 @@
             if (m && m.type === "fsid") { fsid = m.fsid; requestSessions(); _restoreOpenTabs(); _usageStart(); return; }
             if (m && m.type === "remote") { setMainAway(!!m.on, m.host || null); return; }
             if (m && m.type === "tmux-clipboard") { navigator.clipboard.writeText(m.text || "").catch(() => {}); return; }
+            if (m && m.type === "pong") { return; }   // respuesta al heartbeat (el watchdog ya se limpió arriba)
           } catch (_) {}
         }
         term.write(ev.data);
@@ -3456,6 +3477,7 @@
       }
     };
     ws.onclose = (ev) => {
+      stopHeartbeat();
       setStatus("disconnected", "desconectado");
       const code = ev ? ev.code : 0;
       // Cierres por credenciales/seguridad: NO reconectar (reintentar reenviaría
@@ -3491,4 +3513,33 @@
     setStatus("reconnecting", `reconectando en ${secs}s…`);
     setTimeout(connectWS, delay);
   }
+
+  // --- Heartbeat anti-"zombie" -------------------------------------------------
+  // Un socket puede quedar medio-muerto (TCP caído al suspender el equipo, cambiar
+  // de wifi a datos o por idle del túnel) SIN disparar onclose: el navegador lo
+  // cree OPEN, escribes y no responde. Mandamos un ping cada HB_INTERVAL; si no
+  // llega el {type:"pong"} (ni ningún otro dato) en HB_TIMEOUT, lo damos por muerto
+  // y reconectamos. El backend responde {type:"pong"} a cada {type:"ping"}.
+  const HB_INTERVAL = 20000, HB_TIMEOUT = 10000;
+  function stopHeartbeat() {
+    if (hbTimer) { clearInterval(hbTimer); hbTimer = null; }
+    if (hbWatchdog) { clearTimeout(hbWatchdog); hbWatchdog = null; }
+  }
+  function pingNow() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    try { ws.send(JSON.stringify({ type: "ping" })); }
+    catch (_) { reconnectNow(); return; }
+    if (!hbWatchdog) hbWatchdog = setTimeout(() => { hbWatchdog = null; reconnectNow(); }, HB_TIMEOUT);
+  }
+  function startHeartbeat() { stopHeartbeat(); hbTimer = setInterval(pingNow, HB_INTERVAL); }
+
+  // Al volver a la pestaña o recuperar la red, valida el socket en el acto (o
+  // reconecta si ya estaba cerrado) sin esperar al siguiente ping ni al backoff.
+  function wakeCheck() {
+    if (!jwt || !sshPassword) return;                          // sin sesión: no tocar
+    if (!ws || ws.readyState > WebSocket.OPEN) reconnectNow();  // CLOSING/CLOSED
+    else if (ws.readyState === WebSocket.OPEN) pingNow();
+  }
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) wakeCheck(); });
+  window.addEventListener("online", wakeCheck);
 })();

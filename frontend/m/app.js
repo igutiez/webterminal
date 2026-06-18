@@ -6,6 +6,7 @@
   let jwt = null, sshUser = null, sshPassword = null;
   let term = null, fitAddon = null, searchAddon = null, ws = null;
   let reconnectAttempts = 0, autoOpenClaude = false;
+  let hbTimer = null, hbWatchdog = null;   // heartbeat anti-"zombie" (ping/pong + watchdog)
   let currentSession = null;     // label tmux activo (null = principal)
   let fsid = null;               // id de sesión SFTP
   let fsPath = "";               // carpeta actual del explorador
@@ -261,7 +262,7 @@
         black: "#21222c", red: "#ff5555", green: "#50fa7b", yellow: "#f1fa8c", blue: "#6272a4",
         magenta: "#ff79c6", cyan: "#58c4ff", white: "#f8f8f2" },
       fontFamily: "'JetBrains Mono', monospace", fontSize: 13, lineHeight: 1.0,
-      cursorBlink: true, cursorStyle: "block", scrollback: 8000, allowProposedApi: true,
+      cursorBlink: true, cursorStyle: "block", scrollback: 2000, allowProposedApi: true,
       disableStdin: true,                 // la entrada NO pasa por xterm en móvil
     });
     fitAddon = new FitAddon.FitAddon();
@@ -342,8 +343,10 @@
       reconnectAttempts = 0; setStatus("connected");
       ws.send(JSON.stringify({ ssh_user: sshUser, password: sshPassword, session: currentSession || undefined }));
       refit();
+      startHeartbeat();
     };
     ws.onmessage = (ev) => {
+      if (hbWatchdog) { clearTimeout(hbWatchdog); hbWatchdog = null; }   // cualquier dato = socket vivo
       if (ev.data instanceof ArrayBuffer) { term.write(new Uint8Array(ev.data)); }
       else {
         if (ev.data && ev.data[0] === "{") {
@@ -351,6 +354,7 @@
             const m = JSON.parse(ev.data);
             if (m && m.type === "tmux-sessions") { renderSessions(m.sessions || []); return; }
             if (m && m.type === "fsid") { fsid = m.fsid; requestSessions(); return; }
+            if (m && m.type === "pong") return;   // respuesta al heartbeat
           } catch (_) {}
         }
         term.write(ev.data);
@@ -358,6 +362,7 @@
       if (autoOpenClaude) { autoOpenClaude = false; setTimeout(() => { if (ws && ws.readyState === WebSocket.OPEN) ws.send("claude\r"); }, 700); }
     };
     ws.onclose = (ev) => {
+      stopHeartbeat();
       setStatus("disconnected");
       const code = ev ? ev.code : 0;
       if (code === 4401 || code === 4403 || code === 4429 || code === 4400) {
@@ -382,6 +387,29 @@
     if (ws) { try { ws.onclose = null; ws.onerror = null; ws.close(); } catch (_) {} ws = null; }
     connectWS();
   }
+
+  // --- Heartbeat anti-"zombie" (sockets medio-muertos sin onclose, típico al
+  // cambiar de wifi a datos o suspender el móvil) -----------------------------
+  const HB_INTERVAL = 20000, HB_TIMEOUT = 10000;
+  function stopHeartbeat() {
+    if (hbTimer) { clearInterval(hbTimer); hbTimer = null; }
+    if (hbWatchdog) { clearTimeout(hbWatchdog); hbWatchdog = null; }
+  }
+  function pingNow() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    try { ws.send(JSON.stringify({ type: "ping" })); }
+    catch (_) { reconnectNow(); return; }
+    if (!hbWatchdog) hbWatchdog = setTimeout(() => { hbWatchdog = null; reconnectNow(); }, HB_TIMEOUT);
+  }
+  function startHeartbeat() { stopHeartbeat(); hbTimer = setInterval(pingNow, HB_INTERVAL); }
+  function wakeCheck() {
+    if (!jwt || !sshPassword) return;
+    if (!ws || ws.readyState > WebSocket.OPEN) reconnectNow();
+    else if (ws.readyState === WebSocket.OPEN) pingNow();
+  }
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) wakeCheck(); });
+  window.addEventListener("online", wakeCheck);
+
   function sendRaw(s) { if (s && ws && ws.readyState === WebSocket.OPEN) ws.send(s); }
 
   // ---------- Keybar (teclas especiales) ----------
