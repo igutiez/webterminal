@@ -329,7 +329,7 @@
     return out;
   }
 
-  async function uploadFile(file, relpath, inject, onError) {
+  async function uploadFile(file, relpath, inject, onError, silent) {
     if (inject === undefined) inject = true;
     if (!file || !jwt) return null;
     let name = file.name;
@@ -346,7 +346,7 @@
       const d = await res.json().catch(() => ({}));
       if (!res.ok) {
         const msg = d.detail || ("Error al subir (" + res.status + ")");
-        showToast(msg, true);
+        if (!silent) showToast(msg, true);
         if (onError) onError(msg);
         return null;
       }
@@ -362,7 +362,7 @@
       return d.root || d.path;   // raíz a inyectar (carpeta si fue subida de árbol)
     } catch (_) {
       const msg = "Error de red al subir el archivo";
-      showToast(msg, true);
+      if (!silent) showToast(msg, true);
       if (onError) onError(msg);
       return null;
     }
@@ -371,14 +371,6 @@
   // ---------- PREVISUALIZACIÓN DE IMAGEN PEGADA ----------
   let _pastePreviewFile = null;
   let _pastePreviewDataUrl = null;
-
-  function _formatBytes(bytes) {
-    if (!bytes) return "0 B";
-    const units = ["B", "KB", "MB", "GB"];
-    let i = 0, n = bytes;
-    while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
-    return n.toFixed(i === 0 ? 0 : 1) + " " + units[i];
-  }
 
   function _hidePastePreview() {
     const pp = $("paste-preview"); if (!pp) return;
@@ -417,14 +409,17 @@
     if (cancelBtn) { cancelBtn.disabled = false; cancelBtn.textContent = "Descartar"; }
     const ext = ((file.type || "").split("/")[1] || "png").replace("jpeg", "jpg");
     const name = file.name || ("pegado-" + Date.now() + "." + ext);
-    if (meta) meta.textContent = name + " · " + _formatBytes(file.size);
+    if (meta) meta.textContent = name + " · " + humanSize(file.size);
+    const fileBeingRead = file;
     try {
-      _pastePreviewDataUrl = await new Promise((res, rej) => {
+      const dataUrl = await new Promise((res, rej) => {
         const r = new FileReader();
         r.onload = () => res(r.result);
         r.onerror = () => rej(new Error("No se pudo leer la imagen"));
         r.readAsDataURL(file);
       });
+      if (_pastePreviewFile !== fileBeingRead) return; // stale read
+      _pastePreviewDataUrl = dataUrl;
       if (img) img.src = _pastePreviewDataUrl;
       if (pp.hidden) {
         pp.hidden = false;
@@ -445,7 +440,7 @@
     const ok = await uploadFile(_pastePreviewFile, undefined, true, (msg) => {
       _setPastePreviewError(msg);
       if (btn) btn.textContent = "Reintentar";
-    });
+    }, true);
     if (btn) { btn.disabled = false; }
     if (cancel) cancel.disabled = false;
     if (ok) _hidePastePreview();

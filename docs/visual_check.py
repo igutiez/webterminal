@@ -1,8 +1,8 @@
 """Verificación visual de MessorTerminal: login + pantalla de terminal simulada."""
-import http.server, threading, functools, time
+import http.server, threading, functools, time, os
 from playwright.sync_api import sync_playwright
 
-ROOT = "/opt/webterminal/frontend"
+ROOT = os.environ.get("WEBTERMINAL_FRONTEND_DIR", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend"))
 PORT = 8901
 
 handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=ROOT)

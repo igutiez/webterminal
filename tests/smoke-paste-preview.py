@@ -19,7 +19,7 @@ import sys
 
 from playwright.sync_api import sync_playwright, expect
 
-FRONTEND_DIR = "/opt/webterminal/frontend"
+FRONTEND_DIR = os.environ.get("WEBTERMINAL_FRONTEND_DIR", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend"))
 PORT = 8902
 BASE_URL = f"http://127.0.0.1:{PORT}"
 
