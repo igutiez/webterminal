@@ -2,7 +2,7 @@
 import http.server, threading, functools, time
 from playwright.sync_api import sync_playwright
 
-ROOT = "/opt/webterminal/frontend"
+ROOT = "/home/ubuntu/webterminal/frontend"
 PORT = 8901
 
 handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=ROOT)
@@ -63,6 +63,16 @@ with sync_playwright() as p:
     pg.evaluate("document.getElementById('ai-config').hidden = false;")
     time.sleep(0.2)
     pg.screenshot(path="/tmp/shot_dialog.png")
+    # Toast de previsualización de imagen pegada
+    sample_img = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABmJLR0QA/wD/AP+gvaeTAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAB3RJTUUH5wYREw0Q2aMF0QAAAB1pVFh0Q29tbWVudAAAAAAAQ3JlYXRlZCB3aXRoIEdJTVBkLmUHAAAAbUlEQVQ4y2NgYGD4z0ABYAxcwwB8qmE4DNUwjIahSjAMpWGoEgynaRiqBMMwGoYqwTCShqFKMAyjYagSDMNoGKoEwzAahirBMIyGoUowDKNhqBIMw2gYqgTDMBqGKsEwjIahSjAMpWGoEgyjaRiqBAAA6DwxzX0Rj68AAAAASUVORK5CYII="
+    pg.evaluate(
+        "document.getElementById('paste-preview').hidden = false;"
+        "document.getElementById('paste-preview').classList.add('open');"
+        f"document.getElementById('paste-preview-img').src = '{sample_img}';"
+        "document.getElementById('paste-preview-meta').textContent = 'captura.png · 1,2 KB';"
+    )
+    time.sleep(0.2)
+    pg.screenshot(path="/tmp/shot_paste_preview.png")
     b.close()
 srv.shutdown()
 print("ok")
