@@ -409,6 +409,10 @@
     if (cancelBtn) { cancelBtn.disabled = false; cancelBtn.textContent = "Descartar"; }
     const ext = ((file.type || "").split("/")[1] || "png").replace("jpeg", "jpg");
     const name = file.name || ("pegado-" + Date.now() + "." + ext);
+    if (!file.name) {
+      file = new File([file], name, { type: file.type });
+    }
+    _pastePreviewFile = file;
     if (meta) meta.textContent = name + " · " + humanSize(file.size);
     const fileBeingRead = file;
     try {
@@ -433,14 +437,16 @@
 
   async function _uploadFromPastePreview() {
     if (!_pastePreviewFile) return;
+    const file = _pastePreviewFile;
     const btn = $("paste-preview-upload");
     const cancel = $("paste-preview-cancel");
     if (btn) { btn.disabled = true; btn.textContent = "Subiendo…"; }
     if (cancel) cancel.disabled = true;
-    const ok = await uploadFile(_pastePreviewFile, undefined, true, (msg) => {
+    const ok = await uploadFile(file, undefined, true, (msg) => {
       _setPastePreviewError(msg);
       if (btn) btn.textContent = "Reintentar";
     }, true);
+    if (_pastePreviewFile !== file) return;
     if (btn) { btn.disabled = false; }
     if (cancel) cancel.disabled = false;
     if (ok) _hidePastePreview();
@@ -460,16 +466,14 @@
         if (!pp.contains(e.target)) _hidePastePreview();
       });
     }
-    document.addEventListener("keydown", (e) => {
+    document.addEventListener("keyup", (e) => {
       if (e.key === "Escape") {
         const p = $("paste-preview");
         if (p && !p.hidden && p.classList.contains("open")) {
-          e.preventDefault();
-          e.stopPropagation();
           _hidePastePreview();
         }
       }
-    }, true);
+    });
   }
   _initPastePreview();
 
