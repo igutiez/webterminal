@@ -358,6 +358,109 @@
     } catch (_) { showToast("Error de red al subir el archivo", true); return null; }
   }
 
+  // ---------- PREVISUALIZACIÓN DE IMAGEN PEGADA ----------
+  let _pastePreviewFile = null;
+  let _pastePreviewDataUrl = null;
+
+  function _formatBytes(bytes) {
+    if (!bytes) return "0 B";
+    const units = ["B", "KB", "MB", "GB"];
+    let i = 0, n = bytes;
+    while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+    return n.toFixed(i === 0 ? 0 : 1) + " " + units[i];
+  }
+
+  function _hidePastePreview() {
+    const pp = $("paste-preview"); if (!pp) return;
+    pp.classList.remove("open");
+    setTimeout(() => {
+      if (!pp.classList.contains("open")) {
+        pp.hidden = true;
+        const img = $("paste-preview-img"); if (img) img.src = "";
+        _pastePreviewDataUrl = null;
+        _pastePreviewFile = null;
+        const st = $("paste-preview-status"); if (st) { st.textContent = ""; st.hidden = true; }
+      }
+    }, 200);
+  }
+
+  function _setPastePreviewError(msg) {
+    const st = $("paste-preview-status"); if (!st) return;
+    st.textContent = msg; st.hidden = false;
+  }
+
+  async function _showPastePreview(file) {
+    if (!file) return;
+    const pp = $("paste-preview"); if (!pp) return;
+    if (_pastePreviewDataUrl) {
+      const img = $("paste-preview-img"); if (img) img.src = "";
+      _pastePreviewDataUrl = null;
+    }
+    _pastePreviewFile = file;
+    const img = $("paste-preview-img");
+    const meta = $("paste-preview-meta");
+    const st = $("paste-preview-status");
+    if (st) { st.textContent = ""; st.hidden = true; }
+    const ext = ((file.type || "").split("/")[1] || "png").replace("jpeg", "jpg");
+    const name = file.name || ("pegado-" + Date.now() + "." + ext);
+    if (meta) meta.textContent = name + " · " + _formatBytes(file.size);
+    try {
+      _pastePreviewDataUrl = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(r.result);
+        r.onerror = () => rej(new Error("No se pudo leer la imagen"));
+        r.readAsDataURL(file);
+      });
+      if (img) img.src = _pastePreviewDataUrl;
+      if (pp.hidden) {
+        pp.hidden = false;
+        requestAnimationFrame(() => pp.classList.add("open"));
+      }
+    } catch (e) {
+      showToast("No se pudo previsualizar la imagen", true);
+      _pastePreviewFile = null;
+    }
+  }
+
+  async function _uploadFromPastePreview() {
+    if (!_pastePreviewFile) return;
+    const btn = $("paste-preview-upload");
+    const cancel = $("paste-preview-cancel");
+    if (btn) { btn.disabled = true; btn.textContent = "Subiendo…"; }
+    if (cancel) cancel.disabled = true;
+    const ok = await uploadFile(_pastePreviewFile);
+    if (btn) { btn.disabled = false; btn.textContent = "Subir"; }
+    if (cancel) cancel.disabled = false;
+    if (ok) _hidePastePreview();
+    else _setPastePreviewError("Error al subir. Reintenta.");
+  }
+
+  function _initPastePreview() {
+    const closeBtn = $("paste-preview-close");
+    if (closeBtn) closeBtn.addEventListener("click", _hidePastePreview);
+    const cancelBtn = $("paste-preview-cancel");
+    if (cancelBtn) cancelBtn.addEventListener("click", _hidePastePreview);
+    const uploadBtn = $("paste-preview-upload");
+    if (uploadBtn) uploadBtn.addEventListener("click", _uploadFromPastePreview);
+    const pp = $("paste-preview");
+    if (pp) {
+      document.addEventListener("mousedown", (e) => {
+        if (!pp.classList.contains("open")) return;
+        if (!pp.contains(e.target)) _hidePastePreview();
+      });
+    }
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        const p = $("paste-preview");
+        if (p && !p.hidden && p.classList.contains("open")) {
+          e.stopPropagation();
+          _hidePastePreview();
+        }
+      }
+    });
+  }
+  _initPastePreview();
+
   // ---------- CAPTURA DE PANTALLA (para que Claude "vea" otra pestaña/ventana) ----------
   // Eliges qué compartir (queda compartiéndose aunque cambies de pestaña).
   //  📷 foto: 1ª pulsación comparte; 2ª captura un fotograma nítido.
