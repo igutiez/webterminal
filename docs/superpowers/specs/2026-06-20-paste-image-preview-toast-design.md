@@ -37,7 +37,7 @@ Detectar item de tipo image/*
 FileReader.readAsDataURL(blob)
     │
     ▼
-Mostrar #paste-preview-toast con:
+Mostrar #paste-preview con:
   - miniatura data:
   - nombre sugerido
   - tamaño
@@ -57,7 +57,7 @@ Mostrar #paste-preview-toast con:
 
 ### 4.3. UI/UX
 
-- Nuevo elemento `#paste-preview-toast` en `frontend/index.html`.
+- Nuevo elemento `#paste-preview` en `frontend/index.html`.
 - Estilo en `frontend/style.css`: posición fija (`bottom: 1rem; right: 1rem;`), ancho ~280 px, fondo `var(--panel)`, borde `var(--border)`, radio `var(--r-l)`, sombra `var(--shadow-2)`.
 - Miniatura con `max-height: 120px` y `object-fit: contain`.
 - Botones alineados a la derecha, reutilizando clases de `.ui-modal-actions`.

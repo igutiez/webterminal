@@ -3,9 +3,10 @@
 Smoke test for the paste-preview toast feature.
 
 Serves the deployed frontend locally, opens it headlessly with Playwright,
-mocks the WebSocket so the terminal appears connected, and simulates a paste
-event with a small image blob. Verifies that the #paste-preview toast becomes
-visible and can be dismissed/replaced.
+stubs the login endpoint, mocks the WebSocket so the terminal appears connected,
+and simulates paste events with small image blobs. Verifies that the
+#paste-preview toast appears, can be dismissed/replaced, uploads successfully,
+retries on error, and closes with Escape or an outside click.
 """
 
 import http.server
@@ -70,6 +71,26 @@ def ws_mock_script():
     """
 
 
+def paste_image(page, name, color, size):
+    page.evaluate(
+        f"""
+        async () => {{
+            const canvas = document.createElement('canvas');
+            canvas.width = {size}; canvas.height = {size};
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '{color}';
+            ctx.fillRect(0, 0, {size}, {size});
+            const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+            const file = new File([blob], '{name}', {{ type: 'image/png' }});
+            const dt = new DataTransfer();
+            dt.items.add(file);
+            const ev = new ClipboardEvent('paste', {{ bubbles: true, cancelable: true, clipboardData: dt }});
+            document.dispatchEvent(ev);
+        }}
+        """
+    )
+
+
 def main():
     server = start_server()
     try:
@@ -79,69 +100,116 @@ def main():
             page = context.new_page()
             page.add_init_script(ws_mock_script())
 
+            # Stub login so uploadFile receives a JWT.
+            page.route(
+                "**/login",
+                lambda route: route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body='{"token":"smoke-token"}',
+                ),
+            )
+
             page.goto(BASE_URL, wait_until="networkidle")
 
-            # Move to the SSH form without performing real login, then submit it
-            # so the app enters the terminal screen and creates a mock-connected ws.
-            page.evaluate("""
-                document.getElementById('login-screen').style.display = 'none';
-                document.getElementById('ssh-screen').style.display = 'flex';
-                document.getElementById('ssh-user').value = 'ubuntu';
-                document.getElementById('ssh-password').value = '';
-                document.getElementById('ssh-form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-            """)
+            # Log in and connect to a mock terminal session.
+            page.locator("#login-email").fill("smoke@example.com")
+            page.locator("#login-password").fill("smoke")
+            page.locator("#login-form").dispatch_event("submit")
+            page.wait_for_selector("#ssh-screen", state="visible", timeout=10000)
 
-            # Wait for the terminal screen and the preview element to exist.
+            page.locator("#ssh-user").fill("ubuntu")
+            page.locator("#ssh-password").fill("")
+            page.locator("#ssh-form").dispatch_event("submit")
             page.wait_for_selector("#terminal-screen", state="visible", timeout=15000)
+            expect(page.locator("#status-text")).to_contain_text("conectado", timeout=10000)
+
             preview = page.locator("#paste-preview")
             expect(preview).to_have_attribute("hidden", "")
 
-            # Simulate a paste event with a small PNG image blob.
-            page.evaluate("""
-                async () => {
-                    const canvas = document.createElement('canvas');
-                    canvas.width = 2; canvas.height = 2;
-                    const ctx = canvas.getContext('2d');
-                    ctx.fillStyle = '#ff0000';
-                    ctx.fillRect(0, 0, 2, 2);
-                    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
-                    const file = new File([blob], 'smoke.png', { type: 'image/png' });
-                    const dt = new DataTransfer();
-                    dt.items.add(file);
-                    const ev = new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt });
-                    document.dispatchEvent(ev);
-                }
-            """)
-
-            # The toast should become visible.
+            # 1. Paste an image -> toast appears with metadata.
+            paste_image(page, "smoke.png", "#ff0000", 2)
             expect(preview).not_to_have_attribute("hidden", "", timeout=5000)
             expect(preview).to_have_class(re.compile(r"open"))
             expect(page.locator("#paste-preview-meta")).to_contain_text("smoke.png")
 
-            # Dismiss with Descartar.
+            # 2. Dismiss with Descartar.
             page.locator("#paste-preview-cancel").click()
             expect(preview).to_have_attribute("hidden", "", timeout=5000)
 
-            # Paste a second image and verify the toast updates.
-            page.evaluate("""
-                async () => {
-                    const canvas = document.createElement('canvas');
-                    canvas.width = 3; canvas.height = 3;
-                    const ctx = canvas.getContext('2d');
-                    ctx.fillStyle = '#00ff00';
-                    ctx.fillRect(0, 0, 3, 3);
-                    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
-                    const file = new File([blob], 'second.png', { type: 'image/png' });
-                    const dt = new DataTransfer();
-                    dt.items.add(file);
-                    document.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt }));
-                }
-            """)
+            # 3. Paste a second image and verify the toast updates.
+            paste_image(page, "second.png", "#00ff00", 3)
             expect(preview).not_to_have_attribute("hidden", "", timeout=5000)
             expect(page.locator("#paste-preview-meta")).to_contain_text("second.png")
 
-            # Close via the X button.
+            # 4. Close via the X button.
             page.locator("#paste-preview-close").click()
+            expect(preview).to_have_attribute("hidden", "", timeout=5000)
+
+            # 5. Upload success -> toast hides.
+            upload_responses = []
+
+            def handle_upload(route):
+                if upload_responses:
+                    resp = upload_responses.pop(0)
+                    route.fulfill(
+                        status=resp["status"],
+                        content_type="application/json",
+                        body=resp["body"],
+                    )
+                else:
+                    route.fulfill(status=500, body="unexpected /upload call")
+
+            page.route("**/upload", handle_upload)
+
+            paste_image(page, "upload.png", "#0000ff", 4)
+            expect(preview).not_to_have_attribute("hidden", "", timeout=5000)
+            upload_responses.append(
+                {
+                    "status": 200,
+                    "body": '{"path":"/tmp/upload.png","name":"upload.png","root":"/tmp"}',
+                }
+            )
+            page.locator("#paste-preview-upload").click()
+            expect(preview).to_have_attribute("hidden", "", timeout=5000)
+
+            # 6. Upload error -> status shows backend message and button becomes Reintentar.
+            paste_image(page, "retry.png", "#ff00ff", 5)
+            expect(preview).not_to_have_attribute("hidden", "", timeout=5000)
+            upload_responses.extend(
+                [
+                    {
+                        "status": 500,
+                        "body": '{"detail":"Mock upload failure"}',
+                    },
+                    {
+                        "status": 200,
+                        "body": '{"path":"/tmp/retry.png","name":"retry.png","root":"/tmp"}',
+                    },
+                ]
+            )
+            page.locator("#paste-preview-upload").click()
+            expect(page.locator("#paste-preview-status")).to_contain_text(
+                "Mock upload failure", timeout=5000
+            )
+            expect(page.locator("#paste-preview-upload")).to_have_text("Reintentar")
+
+            # Retry and succeed -> toast hides.
+            page.locator("#paste-preview-upload").click()
+            expect(preview).to_have_attribute("hidden", "", timeout=5000)
+
+            page.unroute("**/upload", handle_upload)
+
+            # 7. Escape closes the toast.
+            paste_image(page, "escape.png", "#ffff00", 2)
+            expect(preview).not_to_have_attribute("hidden", "", timeout=5000)
+            page.keyboard.press("Escape")
+            expect(preview).to_have_attribute("hidden", "", timeout=5000)
+
+            # 8. Click outside the toast closes it.
+            paste_image(page, "outside.png", "#00ffff", 2)
+            expect(preview).not_to_have_attribute("hidden", "", timeout=5000)
+            page.locator("#terminal-container").click()
             expect(preview).to_have_attribute("hidden", "", timeout=5000)
 
             browser.close()

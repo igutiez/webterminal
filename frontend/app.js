@@ -329,7 +329,7 @@
     return out;
   }
 
-  async function uploadFile(file, relpath, inject) {
+  async function uploadFile(file, relpath, inject, onError) {
     if (inject === undefined) inject = true;
     if (!file || !jwt) return null;
     let name = file.name;
@@ -344,7 +344,12 @@
     try {
       const res = await fetch("/upload", { method: "POST", headers: { Authorization: "Bearer " + jwt }, body: fd });
       const d = await res.json().catch(() => ({}));
-      if (!res.ok) { showToast(d.detail || ("Error al subir (" + res.status + ")"), true); return null; }
+      if (!res.ok) {
+        const msg = d.detail || ("Error al subir (" + res.status + ")");
+        showToast(msg, true);
+        if (onError) onError(msg);
+        return null;
+      }
       if (inject) {
         // Inyectar la ruta en la terminal (como si se tecleara) para que Claude la abra.
         // Entrecomillamos si tiene espacios para que sea válida también en el shell.
@@ -355,7 +360,12 @@
         if (term) term.focus();
       }
       return d.root || d.path;   // raíz a inyectar (carpeta si fue subida de árbol)
-    } catch (_) { showToast("Error de red al subir el archivo", true); return null; }
+    } catch (_) {
+      const msg = "Error de red al subir el archivo";
+      showToast(msg, true);
+      if (onError) onError(msg);
+      return null;
+    }
   }
 
   // ---------- PREVISUALIZACIÓN DE IMAGEN PEGADA ----------
@@ -401,6 +411,10 @@
     const meta = $("paste-preview-meta");
     const st = $("paste-preview-status");
     if (st) { st.textContent = ""; st.hidden = true; }
+    const uploadBtn = $("paste-preview-upload");
+    const cancelBtn = $("paste-preview-cancel");
+    if (uploadBtn) { uploadBtn.disabled = false; uploadBtn.textContent = "Subir"; }
+    if (cancelBtn) { cancelBtn.disabled = false; cancelBtn.textContent = "Descartar"; }
     const ext = ((file.type || "").split("/")[1] || "png").replace("jpeg", "jpg");
     const name = file.name || ("pegado-" + Date.now() + "." + ext);
     if (meta) meta.textContent = name + " · " + _formatBytes(file.size);
@@ -418,7 +432,7 @@
       }
     } catch (e) {
       showToast("No se pudo previsualizar la imagen", true);
-      _pastePreviewFile = null;
+      _hidePastePreview();
     }
   }
 
@@ -428,11 +442,13 @@
     const cancel = $("paste-preview-cancel");
     if (btn) { btn.disabled = true; btn.textContent = "Subiendo…"; }
     if (cancel) cancel.disabled = true;
-    const ok = await uploadFile(_pastePreviewFile);
-    if (btn) { btn.disabled = false; btn.textContent = "Subir"; }
+    const ok = await uploadFile(_pastePreviewFile, undefined, true, (msg) => {
+      _setPastePreviewError(msg);
+      if (btn) btn.textContent = "Reintentar";
+    });
+    if (btn) { btn.disabled = false; }
     if (cancel) cancel.disabled = false;
     if (ok) _hidePastePreview();
-    else _setPastePreviewError("Error al subir. Reintenta.");
   }
 
   function _initPastePreview() {
@@ -453,11 +469,12 @@
       if (e.key === "Escape") {
         const p = $("paste-preview");
         if (p && !p.hidden && p.classList.contains("open")) {
+          e.preventDefault();
           e.stopPropagation();
           _hidePastePreview();
         }
       }
-    });
+    }, true);
   }
   _initPastePreview();
 
