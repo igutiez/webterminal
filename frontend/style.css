@@ -303,6 +303,35 @@ label.remember input { width: auto; margin: 0; accent-color: var(--accent); curs
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 .toast.toast-err { border-color: var(--red); color: var(--red); }
+
+/* ---------- Toast de previsualización de imagen pegada ---------- */
+.paste-preview {
+  position: fixed; bottom: 16px; right: 16px; z-index: 70;
+  width: 280px; max-width: calc(100vw - 32px);
+  background: linear-gradient(180deg, rgba(255,255,255,.03), transparent 30%), var(--panel);
+  border: 1px solid var(--border); border-radius: var(--r-l);
+  box-shadow: var(--shadow-2), inset 0 1px 0 rgba(255,255,255,.05);
+  padding: 14px;
+  display: flex; flex-direction: column; gap: 10px;
+  opacity: 0; transform: translateY(10px); pointer-events: none;
+  transition: opacity .2s ease, transform .2s ease;
+}
+.paste-preview[hidden] { display: none !important; }
+.paste-preview.open { opacity: 1; transform: translateY(0); pointer-events: auto; }
+.paste-preview-header { display: flex; align-items: center; justify-content: space-between; }
+.paste-preview-title { font-weight: 700; font-size: 14px; color: var(--text); font-family: var(--font-ui); }
+.paste-preview-x { background: transparent; border: none; color: var(--muted); cursor: pointer; padding: 2px; display: inline-flex; align-items: center; justify-content: center; }
+.paste-preview-x:hover { color: var(--text); }
+.paste-preview img { width: 100%; max-height: 120px; object-fit: contain; border-radius: var(--r-s); background: var(--bg); }
+.paste-preview-meta { font-size: 12px; color: var(--muted); word-break: break-all; }
+.paste-preview-status { font-size: 12px; color: var(--red); min-height: 16px; }
+.paste-preview-status[hidden] { display: none; }
+.paste-preview-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.paste-preview-actions .ui-modal-btn { padding: 6px 12px; font-size: 13px; }
+@media (max-width: 640px) {
+  .paste-preview { left: 16px; right: 16px; bottom: 16px; width: auto; }
+}
+
 .xterm .xterm-viewport { overflow-y: auto !important; }
 .xterm .xterm-viewport::-webkit-scrollbar { width: 10px; }
 .xterm .xterm-viewport::-webkit-scrollbar-thumb { background: var(--border); border-radius: var(--r-s); }
