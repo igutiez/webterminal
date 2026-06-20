@@ -374,13 +374,13 @@
 
   function _hidePastePreview() {
     const pp = $("paste-preview"); if (!pp) return;
+    _pastePreviewFile = null;
     pp.classList.remove("open");
     setTimeout(() => {
       if (!pp.classList.contains("open")) {
         pp.hidden = true;
         const img = $("paste-preview-img"); if (img) img.src = "";
         _pastePreviewDataUrl = null;
-        _pastePreviewFile = null;
         const st = $("paste-preview-status"); if (st) { st.textContent = ""; st.hidden = true; }
       }
     }, 200);
@@ -443,6 +443,7 @@
     if (btn) { btn.disabled = true; btn.textContent = "Subiendo…"; }
     if (cancel) cancel.disabled = true;
     const ok = await uploadFile(file, undefined, true, (msg) => {
+      if (_pastePreviewFile !== file) return;
       _setPastePreviewError(msg);
       if (btn) btn.textContent = "Reintentar";
     }, true);
