@@ -2,7 +2,7 @@
 import http.server, threading, functools, time
 from playwright.sync_api import sync_playwright
 
-ROOT = "/home/ubuntu/webterminal/frontend"
+ROOT = "/opt/webterminal/frontend"
 PORT = 8901
 
 handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=ROOT)
