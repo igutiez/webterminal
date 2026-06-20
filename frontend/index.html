@@ -307,6 +307,21 @@
     <input id="img-file" type="file" multiple style="display:none" />
     <div id="toast" class="toast"></div>
 
+    <!-- Previsualización de imagen pegada (toast en esquina) -->
+    <div id="paste-preview" class="paste-preview" hidden>
+      <div class="paste-preview-header">
+        <span class="paste-preview-title">Subir imagen</span>
+        <button id="paste-preview-close" class="paste-preview-x" title="Cerrar (Esc)"><svg class="ic"><use href="#ic-x"/></svg></button>
+      </div>
+      <img id="paste-preview-img" alt="Vista previa" />
+      <div id="paste-preview-meta" class="paste-preview-meta"></div>
+      <div id="paste-preview-status" class="paste-preview-status" hidden></div>
+      <div class="paste-preview-actions">
+        <button id="paste-preview-cancel" class="ui-modal-btn" type="button">Descartar</button>
+        <button id="paste-preview-upload" class="ui-modal-btn primary" type="button">Subir</button>
+      </div>
+    </div>
+
     <input id="files-input" type="file" multiple style="display:none" />
     <input id="files-dir-input" type="file" webkitdirectory directory multiple style="display:none" />
 
