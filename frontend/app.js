@@ -1018,7 +1018,7 @@
           const items = await navigator.clipboard.read();
           for (const it of items) {
             const imgType = (it.types || []).find((t) => t.startsWith("image/"));
-            if (imgType) { const blob = await it.getType(imgType); await uploadFile(blob); return; }
+            if (imgType) { const blob = await it.getType(imgType); _showPastePreview(blob); return; }
           }
         }
       } catch (_) { /* sin permiso de imagen -> probamos texto */ }
@@ -1114,7 +1114,7 @@
           e.preventDefault();
           e.stopPropagation();
           const blob = it.getAsFile();
-          if (blob) uploadFile(blob);
+          if (blob) _showPastePreview(blob);
           return;
         }
       }
