@@ -73,7 +73,7 @@ Mostrar #paste-preview-toast con:
 
 - Error de `FileReader`: ocultar el toast y mostrar notificación breve.
 - Error en `uploadFile()`: mostrar el mensaje en el toast y mantener "Descartar" / "Reintentar".
-- Archivo mayor que `MAX_UPLOAD_BYTES`: mostrar advertencia y deshabilitar "Subir".
+- Si el backend rechaza el archivo (por tamaño u otro motivo), se muestra el mensaje de error dentro del toast y se permite reintentar.
 
 ### 4.5. Seguridad
 
